@@ -252,8 +252,17 @@ fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<usiz
     // scanner recurses too), so walk a few levels without following links.
     let mut failures = 0;
     for root in roots {
-        if !root.exists() {
-            continue;
+        match root.try_exists() {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(err) => {
+                failures += 1;
+                central_repo::record_startup_error(format!(
+                    "central repo: cannot check {} to repoint links ({err})",
+                    root.display()
+                ));
+                continue;
+            }
         }
         for entry in walkdir::WalkDir::new(&root).min_depth(1).max_depth(4) {
             match entry {

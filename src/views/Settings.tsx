@@ -490,10 +490,11 @@ export function Settings() {
       // happens at the next launch.
       const nextPath = await api.setCentralRepoPath(trimmed);
       setCentralRepoPathOverride(nextPath);
-      setCentralRepoPendingPath(await api.getCentralRepoPendingPath());
+      const pending = await api.getCentralRepoPendingPath();
+      setCentralRepoPendingPath(pending);
       setEditingCentralRepoPath(false);
       toast.success(t("settings.repoPathSaved"));
-      toast.info(t("settings.repoPathRestartNotice"));
+      if (pending) toast.info(t("settings.repoPathRestartNotice"));
     } catch (error) {
       toast.error(String(error));
     } finally {
@@ -507,10 +508,11 @@ export function Settings() {
       const nextPath = await api.setCentralRepoPath(null);
       setCentralRepoPathOverride(null);
       setCentralRepoPathInput(nextPath);
-      setCentralRepoPendingPath(await api.getCentralRepoPendingPath());
+      const pending = await api.getCentralRepoPendingPath();
+      setCentralRepoPendingPath(pending);
       setEditingCentralRepoPath(false);
       toast.success(t("settings.repoPathReset"));
-      toast.info(t("settings.repoPathRestartNotice"));
+      if (pending) toast.info(t("settings.repoPathRestartNotice"));
     } catch (error) {
       toast.error(String(error));
     } finally {

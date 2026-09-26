@@ -551,6 +551,40 @@ fn paths_are_same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Move by copying into the (empty) target, for when a rename can't (another
+/// volume). On failure the partial copy is removed — everything in the target
+/// is ours, and left behind it would block every retry as "not empty". On
+/// success the old copy is kept but set aside: left in place it looks like the
+/// live library and blocks ever moving back to that path.
+fn move_by_copy(source: &Path, target: &Path) -> Result<()> {
+    if let Err(err) = copy_dir_recursive(source, target) {
+        if let Ok(entries) = fs::read_dir(target) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let _ = if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                    fs::remove_dir_all(&path)
+                } else {
+                    fs::remove_file(&path)
+                };
+            }
+        }
+        return Err(err);
+    }
+    let aside = source.with_file_name(format!(
+        "{}.moved-{}",
+        source.file_name().and_then(|n| n.to_str()).unwrap_or("library"),
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    ));
+    if let Err(err) = fs::rename(source, &aside) {
+        record_startup_error(format!(
+            "central repo: copied the library to {}, but cannot set the old copy at {} aside ({err})",
+            target.display(),
+            source.display()
+        ));
+    }
+    Ok(())
+}
+
 /// What the caller should do after attempting a pending central-repo move.
 enum MigrationOutcome {
     /// No move was pending, or it completed. Run against the configured base.
@@ -664,7 +698,7 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
     // (or a rename the OS refuses): copy into the empty target. Because the
     // target is empty, no existing file is ever overwritten.
     if fs::rename(&source, current_base).is_err() {
-        if let Err(err) = copy_dir_recursive(&source, current_base) {
+        if let Err(err) = move_by_copy(&source, current_base) {
             record_startup_error(format!(
                 "central repo: migration copy from {} to {} failed ({err:#}); keeping data at source",
                 source.display(),
@@ -795,8 +829,12 @@ pub fn ensure_central_repo(allow_migration: bool) -> Result<()> {
     // the shared config belongs to a different library and must not be applied
     // to — or override — the explicitly chosen root. The app's own startup never
     // sets an override before this point, so the #252 path is unaffected.
-    let may_move = !base_dir_override_active()
-        && take_library_lease(allow_migration && config.pending_migration_from.is_some());
+    // A `--skills-root` run keeps its state under the default home too, so it
+    // shares the lease; it just never moves the app's library.
+    let override_active = base_dir_override_active();
+    let may_move = take_library_lease(
+        allow_migration && !override_active && config.pending_migration_from.is_some(),
+    );
     if may_move {
         // Re-read: another process may have finished a move while we waited.
         config = load_config();
@@ -937,6 +975,48 @@ mod tests {
 
         assert!(matches!(outcome, MigrationOutcome::UseSource));
         assert!(dst.path().join("tools/git-askpass.sh").exists());
+    }
+
+    #[test]
+    fn move_by_copy_sets_the_old_copy_aside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("lib");
+        let dst = tmp.path().join("new");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("a.txt"), b"src").unwrap();
+
+        move_by_copy(&src, &dst).unwrap();
+
+        assert_eq!(fs::read(dst.join("a.txt")).unwrap(), b"src");
+        assert!(!src.exists(), "the path is free to move back to");
+        let aside: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("lib.moved-"))
+            .collect();
+        assert_eq!(aside.len(), 1, "the old copy is kept");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn move_by_copy_failure_leaves_the_target_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("lib");
+        let dst = tmp.path().join("new");
+        fs::create_dir_all(src.join("a")).unwrap();
+        fs::write(src.join("a/ok.txt"), b"x").unwrap();
+        fs::write(src.join("z-unreadable"), b"x").unwrap();
+        fs::set_permissions(src.join("z-unreadable"), fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(src.join("z-unreadable")).is_ok() {
+            return; // running as root: can't provoke the failure
+        }
+
+        assert!(move_by_copy(&src, &dst).is_err());
+
+        assert!(!directory_has_entries(&dst).unwrap(), "retry must see an empty target");
+        assert!(src.join("a/ok.txt").exists(), "source untouched");
+        fs::set_permissions(src.join("z-unreadable"), fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]
