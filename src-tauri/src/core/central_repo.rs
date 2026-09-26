@@ -480,27 +480,25 @@ fn copy_symlink(source: &Path, destination: &Path) -> Result<()> {
 
 /// Files the app recreates on its own. A target holding nothing else is not a
 /// library: it is what an earlier session or the CLI bridge left behind.
-const REGENERABLE_FILES: &[&str] = &[
-    ".skills-manager.lock",
-    "git-askpass.sh",
-    ".DS_Store",
-    "Thumbs.db",
-    "desktop.ini",
-];
+const REGENERABLE_ROOT_FILES: &[&str] = &[".skills-manager.lock", "git-askpass.sh"];
+/// OS metadata, debris wherever it appears.
+const OS_METADATA_FILES: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini"];
 
 /// Whether `path` can be dropped safely: a regenerable file, the CLI bridge's
 /// files in the default home's `bin/` (republished at every launch, so they
 /// must not block moving the library back home), or a directory holding only
 /// such things. Links are never followed or counted as debris, and anything
 /// that cannot be inspected is kept.
-fn is_regenerable(path: &Path) -> bool {
+fn is_regenerable(path: &Path, target: &Path) -> bool {
     let Ok(meta) = fs::symlink_metadata(path) else {
         return false;
     };
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if meta.is_file() {
-        let in_bridge_dir = path.parent() == Some(super::cli_bridge::bridge_dir().as_path());
-        return REGENERABLE_FILES.contains(&name)
+        let parent = path.parent();
+        let in_bridge_dir = parent == Some(super::cli_bridge::bridge_dir().as_path());
+        return OS_METADATA_FILES.contains(&name)
+            || (parent == Some(target) && REGENERABLE_ROOT_FILES.contains(&name))
             || (in_bridge_dir && super::cli_bridge::is_bridge_file(name));
     }
     if !meta.is_dir() {
@@ -511,7 +509,7 @@ fn is_regenerable(path: &Path) -> bool {
     };
     entries
         .into_iter()
-        .all(|entry| entry.is_ok_and(|entry| is_regenerable(&entry.path())))
+        .all(|entry| entry.is_ok_and(|entry| is_regenerable(&entry.path(), target)))
 }
 
 /// Remove debris from a migration target so the move can proceed. All-or-
@@ -526,7 +524,7 @@ fn clear_regenerable_target(target: &Path) -> Result<()> {
     else {
         return Ok(());
     };
-    if !entries.iter().all(|path| is_regenerable(path)) {
+    if !entries.iter().all(|path| is_regenerable(path, target)) {
         return Ok(());
     }
     for path in entries {
@@ -557,9 +555,9 @@ fn paths_are_same_dir(a: &Path, b: &Path) -> bool {
 enum MigrationOutcome {
     /// No move was pending, or it completed. Run against the configured base.
     Proceed,
-    /// The move could not complete safely; the intact library still lives at
-    /// this path. Run this session against it and retry on the next launch.
-    UseSource(PathBuf),
+    /// The move could not complete safely. The marker stays, so `base_dir()`
+    /// keeps resolving to the intact source; the next launch retries.
+    UseSource,
 }
 
 /// Try to satisfy a pending central-repository relocation.
@@ -613,7 +611,7 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
             source.display()
         ));
         push_startup_warning("migration_incomplete");
-        return MigrationOutcome::UseSource(source);
+        return MigrationOutcome::UseSource;
     }
 
     // Only ever move into an absent/empty target — never blind-merge. A
@@ -637,7 +635,7 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
                 source.display()
             ));
             push_startup_warning("migration_incomplete");
-            return MigrationOutcome::UseSource(source);
+            return MigrationOutcome::UseSource;
         }
     };
     if !target_empty {
@@ -647,7 +645,7 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
             source.display()
         ));
         push_startup_warning("migration_incomplete");
-        return MigrationOutcome::UseSource(source);
+        return MigrationOutcome::UseSource;
     }
 
     if let Some(parent) = current_base.parent() {
@@ -658,7 +656,7 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
                 source.display()
             ));
             push_startup_warning("migration_incomplete");
-            return MigrationOutcome::UseSource(source);
+            return MigrationOutcome::UseSource;
         }
     }
 
@@ -673,7 +671,7 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
                 current_base.display()
             ));
             push_startup_warning("migration_incomplete");
-            return MigrationOutcome::UseSource(source);
+            return MigrationOutcome::UseSource;
         }
     }
 
@@ -682,29 +680,62 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
     MigrationOutcome::Proceed
 }
 
-/// Held for the life of the process that may move the library, so no second
-/// app launch or CLI moves it out from under a running app. Lives next to the
-/// config file, which never moves with the library.
-static MIGRATION_CLAIM: OnceLock<Option<fs::File>> = OnceLock::new();
+/// Every process using the app's library holds this lease shared for its
+/// whole life; moving the library takes it exclusively. So a move happens only
+/// while nothing else has the library open (a running app, an agent's CLI call,
+/// a second launch), and whoever starts mid-move waits for it to finish. The
+/// file lives next to the config, which never moves with the library.
+static LIBRARY_LEASE: OnceLock<Mutex<Option<fs::File>>> = OnceLock::new();
 
-fn claim_migration() -> bool {
-    MIGRATION_CLAIM
-        .get_or_init(|| {
-            use fs2::FileExt;
-            let path = config_file_path().with_file_name("app-instance.lock");
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).ok()?;
-            }
-            let file = fs::OpenOptions::new()
+fn lease_slot() -> std::sync::MutexGuard<'static, Option<fs::File>> {
+    LIBRARY_LEASE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+/// Take the lease for the rest of this process. Returns whether it is held
+/// exclusively — only then may this process move the library. Without a lock
+/// file (unwritable config dir) nobody moves anything, which is safe.
+fn take_library_lease(try_exclusive: bool) -> bool {
+    use fs2::FileExt;
+    let mut slot = lease_slot();
+    if slot.is_some() {
+        return false;
+    }
+    let path = config_file_path().with_file_name("library.lock");
+    let file = path
+        .parent()
+        .and_then(|parent| fs::create_dir_all(parent).ok())
+        .and_then(|_| {
+            fs::OpenOptions::new()
                 .create(true)
                 .truncate(false)
                 .write(true)
                 .open(&path)
-                .ok()?;
-            file.try_lock_exclusive().ok()?;
-            Some(file)
-        })
-        .is_some()
+                .ok()
+        });
+    let Some(file) = file else {
+        return false;
+    };
+    // Fully qualified: newer std `File` has inherent lock methods of the same
+    // names; keep every call on one implementation.
+    let exclusive = try_exclusive && FileExt::try_lock_exclusive(&file).is_ok();
+    if !exclusive {
+        // Blocks only while another process is moving the library.
+        let _ = FileExt::lock_shared(&file);
+    }
+    *slot = Some(file);
+    exclusive
+}
+
+/// After a move, go back to sharing the library with other processes.
+fn downgrade_library_lease() {
+    use fs2::FileExt;
+    if let Some(file) = lease_slot().as_ref() {
+        let _ = FileExt::unlock(file);
+        let _ = FileExt::lock_shared(file);
+    }
 }
 
 /// Take the pre-move location recorded by a completed move, if links and DB
@@ -764,16 +795,14 @@ pub fn ensure_central_repo(allow_migration: bool) -> Result<()> {
     // the shared config belongs to a different library and must not be applied
     // to — or override — the explicitly chosen root. The app's own startup never
     // sets an override before this point, so the #252 path is unaffected.
-    // Claim before looking at the marker: the app must hold the claim for its
-    // whole life, since the user may save a new path while it runs.
-    if allow_migration
-        && !base_dir_override_active()
-        && claim_migration()
-        && config.pending_migration_from.is_some()
-    {
+    let may_move = !base_dir_override_active()
+        && take_library_lease(allow_migration && config.pending_migration_from.is_some());
+    if may_move {
+        // Re-read: another process may have finished a move while we waited.
+        config = load_config();
         let pending_before = config.pending_migration_from.clone();
         let target = requested_base_from(&config);
-        let outcome = migrate_repo_if_needed(&mut config, &target);
+        let _ = migrate_repo_if_needed(&mut config, &target);
         if config.pending_migration_from != pending_before {
             if let Err(err) = save_config(&config) {
                 record_startup_error(format!(
@@ -781,14 +810,9 @@ pub fn ensure_central_repo(allow_migration: bool) -> Result<()> {
                 ));
             }
         }
-        if let MigrationOutcome::UseSource(source) = outcome {
-            // Run this whole session against the intact source library.
-            // `base_dir()` (and every dir derived from it) now resolves there,
-            // so the code below and the rest of startup stay consistent.
-            set_runtime_base_dir_override(Some(source));
-        }
+        downgrade_library_lease();
     }
-    // Re-resolve: a fallback override above may have changed the base.
+    // Re-resolve: a completed move changed the base.
     let current_base = base_dir();
 
     // Legacy `.agent-skills` migration must run before create_dir_all below:
@@ -901,6 +925,21 @@ mod tests {
     }
 
     #[test]
+    fn app_file_names_count_as_debris_only_at_the_target_root() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("a.txt"), b"src").unwrap();
+        fs::create_dir_all(dst.path().join("tools")).unwrap();
+        fs::write(dst.path().join("tools/git-askpass.sh"), b"mine").unwrap();
+
+        let mut config = config_migrating(src.path(), dst.path());
+        let outcome = migrate_repo_if_needed(&mut config, dst.path());
+
+        assert!(matches!(outcome, MigrationOutcome::UseSource));
+        assert!(dst.path().join("tools/git-askpass.sh").exists());
+    }
+
+    #[test]
     fn a_bin_dir_outside_the_default_home_is_not_debris() {
         // Only the default home's `bin/` holds the bridge; elsewhere a file
         // with the bridge's name is the user's.
@@ -913,7 +952,7 @@ mod tests {
         let mut config = config_migrating(src.path(), dst.path());
         let outcome = migrate_repo_if_needed(&mut config, dst.path());
 
-        assert!(matches!(outcome, MigrationOutcome::UseSource(_)));
+        assert!(matches!(outcome, MigrationOutcome::UseSource));
         assert!(dst.path().join("bin/skills-manager-cli").exists());
     }
 
@@ -945,7 +984,7 @@ mod tests {
         let mut config = config_migrating(src.path(), dst.path());
         let outcome = migrate_repo_if_needed(&mut config, dst.path());
 
-        assert!(matches!(outcome, MigrationOutcome::UseSource(_)));
+        assert!(matches!(outcome, MigrationOutcome::UseSource));
         assert!(dst.path().join(".skills-manager.lock").exists());
         assert!(dst.path().join("skills/mine/SKILL.md").exists());
         assert_eq!(config.repoint_from, None);
@@ -963,7 +1002,7 @@ mod tests {
         let mut config = config_migrating(src.path(), dst.path());
         let outcome = migrate_repo_if_needed(&mut config, dst.path());
 
-        assert!(matches!(outcome, MigrationOutcome::UseSource(_)));
+        assert!(matches!(outcome, MigrationOutcome::UseSource));
         assert!(outside.path().exists());
     }
 
@@ -997,12 +1036,11 @@ mod tests {
         let mut config = config_migrating(src.path(), dst.path());
         let outcome = migrate_repo_if_needed(&mut config, dst.path());
 
-        match outcome {
-            MigrationOutcome::UseSource(p) => {
-                assert_eq!(p, normalize_path(&src.path().to_string_lossy()).unwrap());
-            }
-            _ => panic!("expected UseSource for a non-empty target"),
-        }
+        assert!(matches!(outcome, MigrationOutcome::UseSource));
+        assert_eq!(
+            live_base_from(&config),
+            normalize_path(&src.path().to_string_lossy()).unwrap()
+        );
         assert!(config.pending_migration_from.is_some(), "marker kept for retry");
         assert_eq!(fs::read(dst.path().join("existing.txt")).unwrap(), b"dst-data");
         assert_eq!(fs::read(src.path().join("a.txt")).unwrap(), b"src");

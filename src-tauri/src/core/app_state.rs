@@ -89,9 +89,23 @@ fn initialize_store_inner(
 
     if allow_migration {
         if let Some((from, to)) = central_repo::take_repoint_from() {
-            // Keep the marker while anything failed, so the next launch retries.
-            if repoint_after_move(&store, &from, &to)? == 0 {
-                central_repo::clear_repoint_from()?;
+            // Never fatal: the library itself is intact at `to`. Keep the
+            // marker while anything failed, so the next launch retries.
+            let done = match repoint_after_move(&store, &from, &to) {
+                Ok(failures) => failures == 0,
+                Err(err) => {
+                    central_repo::record_startup_error(format!(
+                        "central repo: repointing paths after the move failed ({err:#})"
+                    ));
+                    false
+                }
+            };
+            if done {
+                if let Err(err) = central_repo::clear_repoint_from() {
+                    central_repo::record_startup_error(format!(
+                        "central repo: cannot clear the repoint marker ({err:#}); it will rerun"
+                    ));
+                }
             }
         }
     }
@@ -234,24 +248,24 @@ fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<usiz
             }
         }
     }
+    // Skills can sit in category subdirectories (Hermes, and the project
+    // scanner recurses too), so walk a few levels without following links.
     let mut failures = 0;
     for root in roots {
-        match std::fs::read_dir(&root) {
-            Ok(entries) => {
-                for entry in entries {
-                    match entry {
-                        Ok(entry) => links.push(entry.path()),
-                        Err(_) => failures += 1,
-                    }
+        if !root.exists() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(&root).min_depth(1).max_depth(4) {
+            match entry {
+                Ok(entry) if entry.path_is_symlink() => links.push(entry.into_path()),
+                Ok(_) => {}
+                Err(err) => {
+                    failures += 1;
+                    central_repo::record_startup_error(format!(
+                        "central repo: cannot scan {} to repoint links ({err})",
+                        root.display()
+                    ));
                 }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                failures += 1;
-                central_repo::record_startup_error(format!(
-                    "central repo: cannot scan {} to repoint links ({err})",
-                    root.display()
-                ));
             }
         }
     }
@@ -259,16 +273,31 @@ fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<usiz
     links.dedup();
 
     for link in links {
-        let Ok(pointee) = std::fs::read_link(&link) else {
-            continue;
+        let pointee = match std::fs::symlink_metadata(&link) {
+            Ok(meta) if meta.file_type().is_symlink() => std::fs::read_link(&link),
+            Ok(_) => continue,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => Err(err),
         };
-        let Ok(rel) = pointee.strip_prefix(from) else {
-            continue;
+        let moved = pointee.and_then(|pointee| {
+            let Ok(rel) = pointee.strip_prefix(from) else {
+                return Ok(None);
+            };
+            let moved = to.join(rel);
+            Ok(moved.try_exists()?.then_some(moved))
+        });
+        let moved = match moved {
+            Ok(Some(moved)) => moved,
+            Ok(None) => continue,
+            Err(err) => {
+                failures += 1;
+                central_repo::record_startup_error(format!(
+                    "central repo: cannot inspect {} to repoint it ({err})",
+                    link.display()
+                ));
+                continue;
+            }
         };
-        let moved = to.join(rel);
-        if !moved.exists() {
-            continue;
-        }
         if let Err(err) = sync_engine::sync_skill(
             &moved,
             &link,
@@ -332,6 +361,10 @@ mod tests {
         std::fs::create_dir_all(&project_root).unwrap();
         std::os::unix::fs::symlink(from.join("skills/s"), project_root.join("s")).unwrap();
         std::os::unix::fs::symlink(&elsewhere, project_root.join("foreign")).unwrap();
+        // Nested and unrecorded: a category dir inside the project root.
+        std::fs::create_dir_all(project_root.join("cat")).unwrap();
+        std::os::unix::fs::symlink(from.join("skills/cat/nested"), project_root.join("cat/nested"))
+            .unwrap();
         store
             .insert_project(&ProjectRecord {
                 id: "p".into(),
@@ -375,6 +408,10 @@ mod tests {
         assert_eq!(
             std::fs::read_link(project_root.join("s")).unwrap(),
             to.join("skills/s")
+        );
+        assert_eq!(
+            std::fs::read_link(project_root.join("cat/nested")).unwrap(),
+            to.join("skills/cat/nested")
         );
         assert_eq!(
             std::fs::read_link(project_root.join("foreign")).unwrap(),
