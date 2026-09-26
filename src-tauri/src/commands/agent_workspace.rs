@@ -707,8 +707,8 @@ mod tests {
         let store = SkillStore::new(&temp.path().join("store.db")).unwrap();
 
         let skills_root = temp.path().join("hermes-skills");
-        let nested_skill = skills_root.join("software-development/github");
-        let other_skill = skills_root.join("github/github-auth");
+        let nested_skill = skills_root.join("software-development").join("github");
+        let other_skill = skills_root.join("github").join("github-auth");
         std::fs::create_dir_all(&nested_skill).unwrap();
         std::fs::create_dir_all(&other_skill).unwrap();
         std::fs::write(nested_skill.join("SKILL.md"), "# github\n").unwrap();
