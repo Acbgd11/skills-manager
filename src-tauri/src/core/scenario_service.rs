@@ -430,6 +430,51 @@ pub fn sync_desired_targets(
     Ok(refusals)
 }
 
+/// Preview the ownership decisions made by `sync_desired_targets` without changing targets.
+pub fn preflight_scenario_sync_targets(
+    store: &SkillStore,
+    desired_targets: &[ScenarioSyncTarget],
+) -> Result<(), AppError> {
+    let existing_targets = store.get_all_targets().map_err(AppError::db)?;
+    let mut conflicts = Vec::new();
+    for desired in desired_targets {
+        let recorded_mode = existing_targets
+            .iter()
+            .find(|existing| {
+                existing.skill_id == desired.skill_id
+                    && existing.tool == desired.tool
+                    && PathBuf::from(&existing.target_path) == desired.target
+            })
+            .map(|existing| existing.mode.as_str());
+        if let Err(error) = sync_engine::preflight_replace(
+            &desired.source,
+            &desired.target,
+            desired.mode,
+            replace_policy(recorded_mode),
+        ) {
+            if let Some(refused) = error.downcast_ref::<sync_engine::ReplaceRefused>() {
+                conflicts.push(TargetConflictDetail {
+                    path: refused.target.display().to_string(),
+                    reason: refused.reason.to_string(),
+                });
+            } else {
+                return Err(AppError::io(error));
+            }
+        }
+    }
+    if conflicts.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::target_conflict(
+            format!(
+                "Refusing to sync: {} target(s) would overwrite content that is not ours. Nothing was changed.",
+                conflicts.len()
+            ),
+            conflicts,
+        ))
+    }
+}
+
 /// Turn reported refusals into the error a user-initiated command should show.
 /// Deliberately says only that these targets were skipped — everything else in
 /// the operation did apply, so claiming "nothing happened" would be false.
@@ -922,15 +967,28 @@ pub fn apply_skills_to_tools(
     }
 
     match mode {
-        BatchApplyMode::Add => apply_add(store, skill_ids, tool_keys),
+        BatchApplyMode::Add => apply_add(store, skill_ids, tool_keys, false),
         BatchApplyMode::Remove => apply_remove(store, skill_ids, tool_keys),
     }
+}
+
+/// Check the same targets and ownership rules as batch deployment without writing.
+pub fn preflight_add_skills_to_tools(
+    store: &SkillStore,
+    skill_ids: &[String],
+    tool_keys: &[String],
+) -> Result<(), AppError> {
+    if skill_ids.is_empty() || tool_keys.is_empty() {
+        return Ok(());
+    }
+    apply_add(store, skill_ids, tool_keys, true)
 }
 
 fn apply_add(
     store: &SkillStore,
     skill_ids: &[String],
     tool_keys: &[String],
+    preflight_only: bool,
 ) -> Result<(), AppError> {
     let configured_mode = store.get_setting("sync_mode").map_err(AppError::db)?;
     let disabled = tool_service::get_disabled_tools(store);
@@ -1111,6 +1169,9 @@ fn apply_add(
                 .join("; ")
         );
         return Err(AppError::target_conflict(summary, conflicts));
+    }
+    if preflight_only {
+        return Ok(());
     }
 
     let mut synced = 0usize;

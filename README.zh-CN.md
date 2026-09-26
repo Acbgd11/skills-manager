@@ -198,7 +198,7 @@ npm run cli -- skills update --all
 npm run cli -- skills adopt ~/.claude/skills --dry-run
 ```
 
-任何命令组或子命令加 `--help` 都会打印完整用法——下面几个组能做的远不止上面这些例子，破坏性命令都支持 `--dry-run`（`remove` 还强制要求 `--yes`）。
+任何命令组或子命令加 `--help` 都会打印完整用法——下面几个组能做的远不止上面这些例子。部分命令支持 `--dry-run`，包括 `skills deploy/undeploy/sync/remove/adopt` 和 `presets deploy/undeploy/delete`；使用前请查看对应子命令的帮助。实际执行 `skills remove` 还需要 `--yes`。
 
 可用命令分组：
 - `repo`：查看或修改当前 base directory
