@@ -1,9 +1,13 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 
-use super::{central_repo, scenario_service, skill_store::SkillStore, sync_metadata, tool_service};
+use super::{
+    central_repo, scenario_service, skill_store::SkillStore, sync_engine, sync_metadata,
+    tool_adapters, tool_service,
+};
 
 /// Per-stage timings collected during `initialize_store`. The struct is
 /// returned to the caller so the log lines can be emitted once
@@ -48,21 +52,28 @@ impl Default for StartupTimings {
 }
 
 pub fn initialize_store() -> Result<(Arc<SkillStore>, StartupTimings)> {
-    initialize_store_inner(true)
+    initialize_store_inner(true, true)
 }
 
 pub fn initialize_cli_store() -> Result<Arc<SkillStore>> {
-    initialize_store_inner(false).map(|(store, _)| store)
+    initialize_store_inner(false, false).map(|(store, _)| store)
+}
+
+/// For CLI `repo set-path` / `reset-path`: also carry out the move now, unless
+/// the app is running (it then moves at its next launch).
+pub fn initialize_cli_store_moving_repo() -> Result<Arc<SkillStore>> {
+    initialize_store_inner(false, true).map(|(store, _)| store)
 }
 
 fn initialize_store_inner(
     apply_startup_default: bool,
+    allow_migration: bool,
 ) -> Result<(Arc<SkillStore>, StartupTimings)> {
     let total_start = Instant::now();
     let mut timings = StartupTimings::default();
 
     let step = Instant::now();
-    central_repo::ensure_central_repo().context("Failed to create central repo")?;
+    central_repo::ensure_central_repo(allow_migration).context("Failed to create central repo")?;
     timings.ensure_central_repo_ms = step.elapsed().as_millis();
 
     let db_path = central_repo::db_path();
@@ -75,6 +86,13 @@ fn initialize_store_inner(
         .map_err(|e| anyhow::anyhow!(e.to_string()))
         .context("Failed to migrate legacy tool keys")?;
     timings.migrate_legacy_tool_keys_ms = step.elapsed().as_millis();
+
+    if allow_migration {
+        if let Some((from, to)) = central_repo::take_repoint_from() {
+            repoint_after_move(&store, &from, &to)?;
+            central_repo::clear_repoint_from()?;
+        }
+    }
 
     timings.skill_count = store.get_all_skills().map(|s| s.len()).unwrap_or(0);
 
@@ -157,6 +175,165 @@ impl StartupTimings {
             self.apply_scenario_kind,
             self.apply_scenario_ms,
             self.skill_count
+        );
+    }
+}
+
+/// After the library moved, point what still names the old location at the new
+/// one: DB paths, and the symlinks deployed into agent and project skills
+/// directories. Project deployments have no target records and startup sync
+/// only covers the active preset, so neither heals on its own. Only links that
+/// resolve into the old library are touched — never anything else in there.
+fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<()> {
+    let rebase = |path: &str| -> Option<String> {
+        let rel = Path::new(path).strip_prefix(from).ok()?;
+        Some(to.join(rel).to_string_lossy().to_string())
+    };
+    for mut skill in store.get_all_skills()? {
+        let mut changed = false;
+        if let Some(path) = rebase(&skill.central_path) {
+            skill.central_path = path;
+            changed = true;
+        }
+        for field in [&mut skill.source_ref, &mut skill.source_ref_resolved] {
+            if let Some(path) = field.as_deref().and_then(|p| rebase(p)) {
+                *field = Some(path);
+                changed = true;
+            }
+        }
+        if changed {
+            store.upsert_skill(&skill)?;
+        }
+    }
+
+    let adapters = tool_adapters::all_tool_adapters(store);
+    let mut roots: Vec<PathBuf> = adapters.iter().map(|a| a.skills_dir()).collect();
+    for project in store.get_all_projects()? {
+        if project.workspace_type == "linked" {
+            roots.push(PathBuf::from(&project.path));
+            roots.extend(project.disabled_path.map(PathBuf::from));
+            continue;
+        }
+        for adapter in &adapters {
+            let dir = adapter.project_relative_skills_dir();
+            if !dir.is_empty() {
+                roots.push(Path::new(&project.path).join(dir));
+                roots.push(Path::new(&project.path).join(format!("{dir}-disabled")));
+            }
+        }
+    }
+    roots.sort();
+    roots.dedup();
+
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let link = entry.path();
+            let Ok(pointee) = std::fs::read_link(&link) else {
+                continue;
+            };
+            let Ok(rel) = pointee.strip_prefix(from) else {
+                continue;
+            };
+            let moved = to.join(rel);
+            if !moved.exists() {
+                continue;
+            }
+            if let Err(err) = sync_engine::sync_skill(
+                &moved,
+                &link,
+                sync_engine::SyncMode::Symlink,
+                sync_engine::ReplacePolicy::Recorded { mode: "symlink" },
+            ) {
+                central_repo::record_startup_error(format!(
+                    "central repo: cannot repoint {} to {} ({err:#})",
+                    link.display(),
+                    moved.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::skill_store::{ProjectRecord, SkillRecord};
+
+    #[test]
+    #[cfg(unix)]
+    fn repoint_after_move_rewrites_db_paths_and_only_links_into_the_old_library() {
+        let tmp = tempfile::tempdir().unwrap();
+        let from = tmp.path().join("old");
+        let to = tmp.path().join("new");
+        std::fs::create_dir_all(to.join("skills/s")).unwrap();
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        store
+            .insert_skill(&SkillRecord {
+                id: "s".into(),
+                name: "s".into(),
+                description: None,
+                source_type: "local".into(),
+                source_ref: Some(from.join("skills/s").to_string_lossy().into()),
+                source_ref_resolved: None,
+                source_subpath: None,
+                source_branch: None,
+                source_revision: None,
+                remote_revision: None,
+                central_path: from.join("skills/s").to_string_lossy().into(),
+                content_hash: None,
+                enabled: true,
+                created_at: 0,
+                updated_at: 0,
+                status: "ok".into(),
+                update_status: "unknown".into(),
+                last_checked_at: None,
+                last_check_error: None,
+            })
+            .unwrap();
+
+        // A project deployment: no target record, so only this pass can fix it.
+        let project_root = tmp.path().join("project-skills");
+        std::fs::create_dir_all(&project_root).unwrap();
+        std::os::unix::fs::symlink(from.join("skills/s"), project_root.join("s")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, project_root.join("foreign")).unwrap();
+        store
+            .insert_project(&ProjectRecord {
+                id: "p".into(),
+                name: "p".into(),
+                path: project_root.to_string_lossy().into(),
+                workspace_type: "linked".into(),
+                linked_agent_key: Some("claude_code".into()),
+                linked_agent_name: None,
+                disabled_path: None,
+                sort_order: 0,
+                created_at: 0,
+                updated_at: 0,
+            })
+            .unwrap();
+
+        repoint_after_move(&store, &from, &to).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(project_root.join("s")).unwrap(),
+            to.join("skills/s")
+        );
+        assert_eq!(
+            std::fs::read_link(project_root.join("foreign")).unwrap(),
+            elsewhere,
+            "a link that does not point into the old library is not ours to touch"
+        );
+        let skill = store.get_all_skills().unwrap().remove(0);
+        assert_eq!(skill.central_path, to.join("skills/s").to_string_lossy());
+        assert_eq!(
+            skill.source_ref.as_deref(),
+            Some(to.join("skills/s").to_string_lossy().as_ref())
         );
     }
 }

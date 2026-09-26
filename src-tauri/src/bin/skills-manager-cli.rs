@@ -387,6 +387,9 @@ struct RepoStatus {
     skill_count: usize,
     preset_count: usize,
     active_preset_id: Option<String>,
+    /// Set while a move to another location waits for the app to restart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending_base_dir: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -687,6 +690,25 @@ fn main() {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
+    if let Commands::Repo(RepoArgs {
+        command: command @ (RepoCommand::SetPath { .. } | RepoCommand::ResetPath),
+    }) = &cli.command
+    {
+        // `--skills-root` points this run at an external checkout; recording
+        // that as the app library's move source would move the wrong thing.
+        if cli.skills_root.is_some() {
+            anyhow::bail!("repo set-path / reset-path cannot be combined with --skills-root");
+        }
+        let path = match command {
+            RepoCommand::SetPath { path } => Some(path.clone()),
+            _ => None,
+        };
+        central_repo::set_base_dir_override(path)?;
+        let store = app_state::initialize_cli_store_moving_repo()?;
+        print_json(&repo_status(&store), cli.json);
+        return Ok(());
+    }
+
     if let Some(skills_root) = &cli.skills_root {
         let base = central_repo::external_base_dir(skills_root);
         central_repo::set_runtime_base_dir_override(Some(base));
@@ -709,15 +731,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
 fn run_repo(args: RepoArgs, store: &SkillStore, json: bool) -> anyhow::Result<()> {
     match args.command {
         RepoCommand::Status => print_json(&repo_status(store), json),
-        RepoCommand::SetPath { path } => {
-            central_repo::set_base_dir_override(Some(path))?;
-            let store = app_state::initialize_cli_store()?;
-            print_json(&repo_status(&store), json);
-        }
-        RepoCommand::ResetPath => {
-            central_repo::set_base_dir_override(None)?;
-            let store = app_state::initialize_cli_store()?;
-            print_json(&repo_status(&store), json);
+        RepoCommand::SetPath { .. } | RepoCommand::ResetPath => {
+            unreachable!("handled in run() before the store is opened")
         }
     }
     Ok(())
@@ -732,6 +747,8 @@ fn repo_status(store: &SkillStore) -> RepoStatus {
         skill_count: store.get_all_skills().unwrap_or_default().len(),
         preset_count: store.get_all_scenarios().unwrap_or_default().len(),
         active_preset_id: store.get_active_scenario_id().unwrap_or(None),
+        pending_base_dir: central_repo::pending_base_dir()
+            .map(|path| path.to_string_lossy().to_string()),
     }
 }
 

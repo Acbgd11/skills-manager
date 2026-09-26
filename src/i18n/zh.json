@@ -621,6 +621,7 @@
     "repoPathEmpty": "请先填写中央仓库路径",
     "repoPathDefaultHint": "当前使用默认中央仓库路径",
     "repoPathCustomHint": "当前使用自定义中央仓库路径",
+    "repoPathPendingHint": "重启应用后会把技能库迁移到 {{path}}；在此之前仍使用当前位置。",
     "changeDir": "更改目录",
     "openInFinder": "打开文件夹",
     "syncMode": "默认同步模式",

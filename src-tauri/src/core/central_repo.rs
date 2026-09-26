@@ -40,7 +40,7 @@ pub fn startup_warnings() -> Vec<String> {
 /// runs before `tauri_plugin_log` is installed (see `run()` in lib.rs), so a
 /// `log::error!` here is swallowed by the default no-op logger. Stash the
 /// detail and let `setup` flush it once the real logger exists.
-fn record_startup_error(message: String) {
+pub(crate) fn record_startup_error(message: String) {
     STARTUP_ERROR_LOG
         .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
@@ -79,6 +79,11 @@ pub(crate) fn test_base_dir_lock() -> std::sync::MutexGuard<'static, ()> {
 struct RepoPathConfig {
     repo_path: Option<String>,
     pending_migration_from: Option<String>,
+    /// Where the library lived before a move that has completed. Links and DB
+    /// paths still pointing there are rewritten once the store is open, then
+    /// this is cleared (see [`take_repoint_from`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repoint_from: Option<String>,
 }
 
 fn default_base_dir() -> PathBuf {
@@ -203,6 +208,31 @@ pub fn configured_base_dir() -> Option<PathBuf> {
         .and_then(|path| normalize_path(&path).ok())
 }
 
+/// Where the user asked the library to live (takes effect at the next launch).
+fn requested_base_from(config: &RepoPathConfig) -> PathBuf {
+    config
+        .repo_path
+        .as_deref()
+        .and_then(|path| normalize_path(path).ok())
+        .unwrap_or_else(default_base_dir)
+}
+
+/// Where the library actually is: the source of a move that hasn't happened
+/// yet, otherwise the requested location. Saving a new path therefore never
+/// switches a running session — the move happens at the next launch.
+fn live_base_from(config: &RepoPathConfig) -> PathBuf {
+    if let Some(source) = config
+        .pending_migration_from
+        .as_deref()
+        .and_then(|path| normalize_path(path).ok())
+    {
+        if source.is_dir() {
+            return source;
+        }
+    }
+    requested_base_from(config)
+}
+
 pub fn base_dir() -> PathBuf {
     if let Some(path) = BASE_DIR_OVERRIDE
         .get_or_init(|| Mutex::new(None))
@@ -213,7 +243,14 @@ pub fn base_dir() -> PathBuf {
         return path;
     }
 
-    configured_base_dir().unwrap_or_else(default_base_dir)
+    live_base_from(&load_config())
+}
+
+/// The location a pending move will go to at the next launch, if any.
+pub fn pending_base_dir() -> Option<PathBuf> {
+    let config = load_config();
+    let requested = requested_base_from(&config);
+    (live_base_from(&config) != requested).then_some(requested)
 }
 
 /// Whether an explicit runtime base-dir override is active (CLI `--skills-root`
@@ -360,21 +397,12 @@ pub fn db_path() -> PathBuf {
 }
 
 pub fn set_base_dir_override(path: Option<String>) -> Result<PathBuf> {
-    let current = base_dir();
     let mut config = load_config();
 
-    // The actual on-disk data location can differ from `current` when the user
-    // already changed the path once but hasn't restarted yet — `current` then
-    // reflects the unsatisfied future target stored in `repo_path`, while the
-    // data still sits at `pending_migration_from`. Track the true location so
-    // multiple changes before restart still migrate from the right source.
-    let data_location = match &config.pending_migration_from {
-        Some(src) => match normalize_path(src) {
-            Ok(path) if path.is_dir() => path,
-            _ => current.clone(),
-        },
-        None => current.clone(),
-    };
+    // Resolve from the persisted config, never `base_dir()`: a runtime override
+    // (CLI `--skills-root`) is not where the app's library lives. Changing the
+    // path twice before a restart still migrates from where the data really is.
+    let data_location = live_base_from(&config);
 
     let (next, persist_repo_path) = match path {
         Some(raw) => (normalize_path(&raw)?, true),
@@ -407,7 +435,9 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
         let entry = entry?;
         let relative = entry.path().strip_prefix(source)?;
         let destination = target.join(relative);
-        if entry.file_type().is_dir() {
+        if entry.file_type().is_symlink() {
+            copy_symlink(entry.path(), &destination)?;
+        } else if entry.file_type().is_dir() {
             fs::create_dir_all(&destination)?;
         } else {
             if let Some(parent) = destination.parent() {
@@ -420,6 +450,90 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
                     destination.display()
                 )
             })?;
+        }
+    }
+    Ok(())
+}
+
+/// Recreate a link as a link. Following it would turn a file link into a copy
+/// and fail outright on a directory link, aborting a cross-volume move.
+fn copy_symlink(source: &Path, destination: &Path) -> Result<()> {
+    let link = fs::read_link(source)?;
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&link, destination)?;
+    #[cfg(windows)]
+    {
+        if fs::metadata(source).map(|m| m.is_dir()).unwrap_or(false) {
+            std::os::windows::fs::symlink_dir(&link, destination)?;
+        } else {
+            std::os::windows::fs::symlink_file(&link, destination)?;
+        }
+    }
+    Ok(())
+}
+
+/// Files the app recreates on its own. A target holding nothing else is not a
+/// library: it is what an earlier session or the CLI bridge left behind.
+const REGENERABLE_FILES: &[&str] = &[
+    ".skills-manager.lock",
+    "git-askpass.sh",
+    ".DS_Store",
+    "Thumbs.db",
+    "desktop.ini",
+];
+
+/// Whether `path` (a direct child of the target) can be dropped safely:
+/// a regenerable file, the CLI bridge's `bin/`, or a directory tree holding
+/// only such things. Links are never followed or counted as debris.
+fn is_regenerable(path: &Path, at_root: bool) -> bool {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if meta.is_file() {
+        return REGENERABLE_FILES.contains(&name);
+    }
+    if !meta.is_dir() {
+        return false;
+    }
+    // The bridge lives in the default home's `bin/` and is republished at
+    // every launch, so it must not block moving the library back home.
+    let bridge_dir = at_root && name == "bin";
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    entries.flatten().all(|entry| {
+        let child = entry.path();
+        if bridge_dir {
+            let child_name = entry.file_name();
+            let child_name = child_name.to_str().unwrap_or("");
+            let is_bridge = child_name.starts_with("skills-manager-cli") || child_name == ".version";
+            if is_bridge && entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                return true;
+            }
+        }
+        is_regenerable(&child, false)
+    })
+}
+
+/// Remove debris from a migration target so the move can proceed. All-or-
+/// nothing: if anything in it is not known debris, nothing is touched.
+fn clear_regenerable_target(target: &Path) -> Result<()> {
+    let Ok(entries) = fs::read_dir(target) else {
+        return Ok(());
+    };
+    let entries: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    if !entries.iter().all(|path| is_regenerable(path, true)) {
+        return Ok(());
+    }
+    for path in entries {
+        if fs::symlink_metadata(&path)?.is_dir() {
+            fs::remove_dir_all(&path)?;
+        } else {
+            fs::remove_file(&path)?;
         }
     }
     Ok(())
@@ -502,6 +616,12 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
     // intact source is lossless, overwriting is not. A fresh target also means
     // the recursive copy only ever creates new files, so it can never hit the
     // read-only git pack files that overwriting bricked startup on (#252).
+    if let Err(err) = clear_regenerable_target(current_base) {
+        record_startup_error(format!(
+            "central repo: cannot clear leftovers in migration target {} ({err})",
+            current_base.display()
+        ));
+    }
     let target_empty = match directory_has_entries(current_base) {
         Ok(has_entries) => !has_entries,
         Err(err) => {
@@ -552,10 +672,59 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
     }
 
     config.pending_migration_from = None;
+    config.repoint_from = Some(source.to_string_lossy().to_string());
     MigrationOutcome::Proceed
 }
 
-pub fn ensure_central_repo() -> Result<()> {
+/// Held for the life of the process that may move the library, so no second
+/// app launch or CLI moves it out from under a running app. Lives next to the
+/// config file, which never moves with the library.
+static MIGRATION_CLAIM: OnceLock<Option<fs::File>> = OnceLock::new();
+
+fn claim_migration() -> bool {
+    MIGRATION_CLAIM
+        .get_or_init(|| {
+            use fs2::FileExt;
+            let path = config_file_path().with_file_name("app-instance.lock");
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).ok()?;
+            }
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&path)
+                .ok()?;
+            file.try_lock_exclusive().ok()?;
+            Some(file)
+        })
+        .is_some()
+}
+
+/// Take the pre-move location recorded by a completed move, if links and DB
+/// paths pointing there still need rewriting. Call [`clear_repoint_from`] once
+/// that is done, so a crash in between retries at the next launch.
+pub fn take_repoint_from() -> Option<(PathBuf, PathBuf)> {
+    if base_dir_override_active() {
+        return None;
+    }
+    let config = load_config();
+    let from = normalize_path(config.repoint_from.as_deref()?).ok()?;
+    Some((from, base_dir()))
+}
+
+pub fn clear_repoint_from() -> Result<()> {
+    let mut config = load_config();
+    if config.repoint_from.take().is_some() {
+        save_config(&config)?;
+    }
+    Ok(())
+}
+
+/// `allow_migration`: whether this process may carry out a pending move. Only
+/// the app at startup and an explicit CLI `repo set-path` do; everything else
+/// keeps running against the library where it is.
+pub fn ensure_central_repo(allow_migration: bool) -> Result<()> {
     // A config file that exists but cannot be used means the app is about to
     // run against the default location even though the user configured (and
     // populated) another one. Never let that pass silently — it presents as
@@ -589,10 +758,14 @@ pub fn ensure_central_repo() -> Result<()> {
     // the shared config belongs to a different library and must not be applied
     // to — or override — the explicitly chosen root. The app's own startup never
     // sets an override before this point, so the #252 path is unaffected.
-    if !base_dir_override_active() {
+    if allow_migration
+        && config.pending_migration_from.is_some()
+        && !base_dir_override_active()
+        && claim_migration()
+    {
         let pending_before = config.pending_migration_from.clone();
-        let current_base = base_dir();
-        let outcome = migrate_repo_if_needed(&mut config, &current_base);
+        let target = requested_base_from(&config);
+        let outcome = migrate_repo_if_needed(&mut config, &target);
         if config.pending_migration_from != pending_before {
             if let Err(err) = save_config(&config) {
                 record_startup_error(format!(
@@ -648,6 +821,7 @@ mod tests {
         RepoPathConfig {
             repo_path: Some(target.to_string_lossy().to_string()),
             pending_migration_from: Some(source.to_string_lossy().to_string()),
+            ..Default::default()
         }
     }
 
@@ -664,6 +838,104 @@ mod tests {
         assert!(matches!(outcome, MigrationOutcome::Proceed));
         assert_eq!(config.pending_migration_from, None);
         assert_eq!(fs::read(dst.path().join("skills/s.md")).unwrap(), b"skill");
+    }
+
+    #[test]
+    fn live_base_is_the_move_source_until_the_move_happens() {
+        // Saving a new path must not switch the running session: everything
+        // it wrote would land in the target and block the move at the next
+        // launch (#449 #469 #393).
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        let config = config_migrating(src.path(), &dst.path().join("lib"));
+        assert_eq!(
+            live_base_from(&config),
+            normalize_path(&src.path().to_string_lossy()).unwrap()
+        );
+        assert_eq!(
+            requested_base_from(&config),
+            normalize_path(&dst.path().join("lib").to_string_lossy()).unwrap()
+        );
+
+        // Once the source is gone (moved), the requested location is live.
+        let moved = config_migrating(&src.path().join("gone"), &dst.path().join("lib"));
+        assert_eq!(live_base_from(&moved), requested_base_from(&moved));
+    }
+
+    #[test]
+    fn migration_clears_regenerable_leftovers_and_records_repoint() {
+        // What an earlier session and the CLI bridge leave in a target: a
+        // lock file, empty skeleton dirs, OS metadata, the bridge's `bin/`.
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("a.txt"), b"src").unwrap();
+        fs::write(dst.path().join(".skills-manager.lock"), b"pid=1").unwrap();
+        fs::write(dst.path().join(".DS_Store"), b"").unwrap();
+        fs::create_dir_all(dst.path().join("skills")).unwrap();
+        fs::create_dir_all(dst.path().join("cache/repos")).unwrap();
+        fs::create_dir_all(dst.path().join("bin")).unwrap();
+        fs::write(dst.path().join("bin/skills-manager-cli"), b"bin").unwrap();
+        fs::write(dst.path().join("bin/.version"), b"1.0").unwrap();
+
+        let mut config = config_migrating(src.path(), dst.path());
+        let outcome = migrate_repo_if_needed(&mut config, dst.path());
+
+        assert!(matches!(outcome, MigrationOutcome::Proceed));
+        assert_eq!(config.pending_migration_from, None);
+        assert!(config.repoint_from.is_some());
+        assert_eq!(fs::read(dst.path().join("a.txt")).unwrap(), b"src");
+    }
+
+    #[test]
+    fn migration_leaves_a_target_with_real_content_untouched() {
+        // One real file among the leftovers: nothing is removed.
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("a.txt"), b"src").unwrap();
+        fs::write(dst.path().join(".skills-manager.lock"), b"").unwrap();
+        fs::create_dir_all(dst.path().join("skills/mine")).unwrap();
+        fs::write(dst.path().join("skills/mine/SKILL.md"), b"x").unwrap();
+
+        let mut config = config_migrating(src.path(), dst.path());
+        let outcome = migrate_repo_if_needed(&mut config, dst.path());
+
+        assert!(matches!(outcome, MigrationOutcome::UseSource(_)));
+        assert!(dst.path().join(".skills-manager.lock").exists());
+        assert!(dst.path().join("skills/mine/SKILL.md").exists());
+        assert_eq!(config.repoint_from, None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn migration_does_not_follow_a_link_disguised_as_a_skeleton_dir() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("a.txt"), b"src").unwrap();
+        std::os::unix::fs::symlink(outside.path(), dst.path().join("skills")).unwrap();
+
+        let mut config = config_migrating(src.path(), dst.path());
+        let outcome = migrate_repo_if_needed(&mut config, dst.path());
+
+        assert!(matches!(outcome, MigrationOutcome::UseSource(_)));
+        assert!(outside.path().exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn copy_dir_recursive_keeps_links_as_links() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::create_dir_all(src.path().join("real")).unwrap();
+        fs::write(src.path().join("real/f"), b"x").unwrap();
+        std::os::unix::fs::symlink("real", src.path().join("dir-link")).unwrap();
+        std::os::unix::fs::symlink("real/f", src.path().join("file-link")).unwrap();
+
+        copy_dir_recursive(src.path(), &dst.path().join("out")).unwrap();
+
+        let out = dst.path().join("out");
+        assert_eq!(fs::read_link(out.join("dir-link")).unwrap(), Path::new("real"));
+        assert_eq!(fs::read_link(out.join("file-link")).unwrap(), Path::new("real/f"));
     }
 
     #[test]
@@ -729,6 +1001,7 @@ mod tests {
         let mut config = RepoPathConfig {
             repo_path: Some(dst.path().to_string_lossy().to_string()),
             pending_migration_from: None,
+            ..Default::default()
         };
         let outcome = migrate_repo_if_needed(&mut config, dst.path());
         assert!(matches!(outcome, MigrationOutcome::Proceed));
