@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.40.1] - 2026-09-26
+
+### Release Overview
+- Changing the central repository path now actually takes effect, and several ways a sync could delete or misplace a skill directory are closed.
+
+### User-facing
+- **Changing the central repository path now takes effect** — Saving a new path switched the running app to it immediately while its database stayed at the old location, so the first thing written afterwards (a lock file, an install) landed in the new folder. The move at the next launch only accepts an empty folder, so it refused on every launch from then on, and Settings kept showing the old path. The running app now stays on the current library until you restart; Settings shows where it will move. If you are already stuck, restarting is enough in most cases: leftovers the app recreates by itself (the lock file, empty folders, OS metadata) no longer block the move — anything else still does, and nothing is removed then. After a move, skill links in agent and project folders are pointed at the new location, and a move across drives keeps the old copy renamed to `<name>.moved-<time>` instead of leaving it in place. Thanks to @ZhuYichuan, whose diagnosis in #472 this builds on (#449, #469, #393).
+- **A folder you put in place of a deployed skill is no longer deleted** — Disabling an agent, changing its path, deleting a skill or a custom agent, or unchecking a skill for one agent removed whatever sat at the recorded location without checking it was still ours. They now remove it only while it still matches the deployment. Thanks to @zhirogo (#460, #435).
+- **Importing a nested skill (Hermes categories) keeps its path** — It was imported at a flat top-level name, which could replace a category folder of the same name. Thanks to @GoodScholar (#482, #436).
+- **CLI `--dry-run` reports the conflicts the real run would hit** — `skills deploy`, `presets deploy` and `skills sync` dry runs now run the same ownership check as the real deployment. Thanks to @GoodScholar (#483, #437).
+- **Agents that share a skills folder no longer lose each other's deployments** — Disabling one of them, or unchecking a skill for it, removed the shared copy the other agent still used.
+
+### Developer & Governance
+- Every process that uses the app's library (app, CLI, `--skills-root`) holds a shared lease for its lifetime; moving the library requires it exclusively, so a move can't run under an agent's CLI call or a second launch. Ordinary CLI commands no longer carry out a pending move; `repo set-path` does, unless the app is running, and refuses `--skills-root`.
+- The cross-volume copy recreates symlinks instead of following them, and removes a partial copy on failure so the retry isn't blocked by its own leftovers.
+- `repo status` reports `pending_base_dir` while a move waits for a restart.
 ## [1.40.0] - 2026-09-17
 
 ### Release Overview
