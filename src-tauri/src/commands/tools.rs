@@ -42,10 +42,17 @@ fn sync_active_scenario_to_tool(store: &SkillStore, tool_key: &str) {
 fn unsync_all_for_tool(store: &SkillStore, tool_key: &str) {
     let targets = store.get_all_targets().unwrap_or_default();
     for target in targets.iter().filter(|t| t.tool == tool_key) {
-        sync_engine::remove_recorded_target_or_warn(
-            &PathBuf::from(&target.target_path),
-            &target.mode,
-        );
+        // Tools can share one skills directory; another tool's live
+        // deployment at this exact path is not ours to remove.
+        let still_referenced = targets
+            .iter()
+            .any(|other| other.tool != tool_key && other.target_path == target.target_path);
+        if !still_referenced {
+            sync_engine::remove_recorded_target_or_warn(
+                &PathBuf::from(&target.target_path),
+                &target.mode,
+            );
+        }
         store.delete_target(&target.skill_id, tool_key).ok();
     }
 }
@@ -740,5 +747,37 @@ mod tests {
             "a recorded copy deployment is ours to remove"
         );
         assert!(store.get_targets_for_skill("s1").unwrap().is_empty());
+    }
+
+    /// Two tools resolving to one skills directory share the deployment at a
+    /// path. Disabling one must leave the other's copy in place.
+    #[test]
+    fn disabling_a_tool_keeps_a_deployment_another_tool_shares() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        let target = tmp.path().join("agent-skills").join("my-skill");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("SKILL.md"), "---\nname: my-skill\n---\n").unwrap();
+        insert_skill_and_target(&store, &target, "agent_a", "copy");
+        store
+            .insert_target(&SkillTargetRecord {
+                id: "t2".to_string(),
+                skill_id: "s1".to_string(),
+                tool: "agent_b".to_string(),
+                target_path: target.to_string_lossy().to_string(),
+                mode: "copy".to_string(),
+                status: "ok".to_string(),
+                synced_at: Some(1),
+                last_error: None,
+                source_hash: None,
+            })
+            .unwrap();
+
+        unsync_all_for_tool(&store, "agent_a");
+
+        assert!(target.exists(), "agent_b still deploys this path");
+        let remaining = store.get_targets_for_skill("s1").unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].tool, "agent_b");
     }
 }

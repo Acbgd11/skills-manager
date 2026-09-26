@@ -57,6 +57,14 @@ fn unsync_skill_for_tool_in_preset(
         .get_targets_for_skill(skill_id)
         .map_err(AppError::db)?;
     if let Some(target) = targets.iter().find(|target| target.tool == tool) {
+        // Same survivor check as `unsync_skill_from_tool`: another tool
+        // sharing this skills directory keeps its deployment.
+        let still_referenced = targets
+            .iter()
+            .any(|other| other.tool != tool && other.target_path == target.target_path);
+        if still_referenced {
+            return store.delete_target(skill_id, tool).map_err(AppError::db);
+        }
         sync_engine::remove_recorded_target_or_warn(
             &PathBuf::from(&target.target_path),
             &target.mode,
@@ -578,6 +586,41 @@ mod tests {
             "the user's directory must survive the uncheck"
         );
         assert!(store.get_targets_for_skill("s1").unwrap().is_empty());
+    }
+
+    /// Unchecking one tool must not delete a deployment another tool shares.
+    #[test]
+    fn preset_unsync_keeps_a_deployment_another_tool_shares() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        let target = tmp.path().join("agent-skills").join("my-skill");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("SKILL.md"), "---\nname: my-skill\n---\n").unwrap();
+        store
+            .insert_skill(&sample_skill("s1", "my-skill", &tmp.path().join("central")))
+            .unwrap();
+        for (id, tool) in [("t1", "agent_a"), ("t2", "agent_b")] {
+            store
+                .insert_target(&crate::core::skill_store::SkillTargetRecord {
+                    id: id.to_string(),
+                    skill_id: "s1".to_string(),
+                    tool: tool.to_string(),
+                    target_path: target.to_string_lossy().to_string(),
+                    mode: "copy".to_string(),
+                    status: "ok".to_string(),
+                    synced_at: Some(1),
+                    last_error: None,
+                    source_hash: None,
+                })
+                .unwrap();
+        }
+
+        unsync_skill_for_tool_in_preset(&store, "s1", "agent_a").unwrap();
+
+        assert!(target.exists(), "agent_b still deploys this path");
+        let remaining = store.get_targets_for_skill("s1").unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].tool, "agent_b");
     }
 
     #[test]
