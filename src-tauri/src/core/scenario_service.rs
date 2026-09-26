@@ -78,6 +78,7 @@ pub fn collect_scenario_sync_targets(
         .get_skills_for_scenario(scenario_id)
         .map_err(AppError::db)?;
     let configured_mode = store.get_setting("sync_mode").map_err(AppError::db)?;
+    let existing_targets = store.get_all_targets().map_err(AppError::db)?;
     let mut targets = Vec::new();
 
     for skill in &skills {
@@ -85,7 +86,7 @@ pub fn collect_scenario_sync_targets(
         let target_name = sync_engine::target_dir_name(&source, &skill.name);
         let adapters = enabled_installed_adapters_for_scenario_skill(store, scenario_id, &skill.id)?;
         for adapter in &adapters {
-            let target = adapter.skills_dir().join(&target_name);
+            let target = deployment_target(adapter, &target_name, &skill.id, &existing_targets);
             let mode = sync_engine::sync_mode_for_tool(&adapter.key, configured_mode.as_deref());
             targets.push(ScenarioSyncTarget {
                 skill_id: skill.id.clone(),
@@ -100,6 +101,30 @@ pub fn collect_scenario_sync_targets(
     }
 
     Ok(targets)
+}
+
+fn deployment_target(
+    adapter: &tool_adapters::ToolAdapter,
+    target_name: &str,
+    skill_id: &str,
+    existing_targets: &[SkillTargetRecord],
+) -> PathBuf {
+    let root = adapter.skills_dir();
+    existing_targets
+        .iter()
+        .find(|target| target.skill_id == skill_id && target.tool == adapter.key)
+        .map(|target| PathBuf::from(&target.target_path))
+        .filter(|path| is_skill_path_within_root(path, &root))
+        .unwrap_or_else(|| root.join(target_name))
+}
+
+fn is_skill_path_within_root(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        !relative.as_os_str().is_empty()
+            && relative
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
+    })
 }
 
 pub fn preview_scenario_sync(
@@ -537,7 +562,7 @@ pub fn sync_skill_to_active_scenario(
             let target_name = sync_engine::target_dir_name(&source, &skill.name);
             let old_targets = store.get_targets_for_skill(skill_id).unwrap_or_default();
             for adapter in &adapters {
-                let target = adapter.skills_dir().join(&target_name);
+                let target = deployment_target(adapter, &target_name, skill_id, &old_targets);
                 let mut recorded_mode: Option<String> = None;
                 if let Some(old) = old_targets.iter().find(|t| t.tool == adapter.key) {
                     let old_path = PathBuf::from(&old.target_path);
@@ -709,11 +734,11 @@ pub fn sync_active_scenario_to_tool(store: &SkillStore, tool_key: &str) {
 /// thing the user asked us to take over. Ordinary deployment must never do
 /// that, so the two intents cannot share a code path (#363).
 #[derive(Debug, Clone, Copy)]
-pub enum DeployIntent {
+pub enum DeployIntent<'a> {
     /// Ordinary deployment: replace only what our own records vouch for.
     Managed,
-    /// The user explicitly asked us to take over whatever is at this path.
-    AdoptExisting,
+    /// The user explicitly asked us to take over this scanned skill path.
+    AdoptExisting(&'a Path),
 }
 
 /// Re-point every `source_ref` that names `target` at the referring skill's own
@@ -783,7 +808,7 @@ pub fn sync_single_skill_to_tool(
     store: &SkillStore,
     skill_id: &str,
     tool: &str,
-    intent: DeployIntent,
+    intent: DeployIntent<'_>,
 ) -> Result<(), AppError> {
     let adapter = tool_adapters::find_adapter_with_store(store, tool)
         .ok_or_else(|| AppError::not_found(format!("Unknown tool: {}", tool)))?;
@@ -808,27 +833,40 @@ pub fn sync_single_skill_to_tool(
         .ok_or_else(|| AppError::not_found("Skill not found"))?;
 
     let source = PathBuf::from(&skill.central_path);
-    let target = adapter
-        .skills_dir()
-        .join(sync_engine::target_dir_name(&source, &skill.name));
+    let existing_targets = store.get_targets_for_skill(skill_id).unwrap_or_default();
+    let target = match intent {
+        DeployIntent::AdoptExisting(path) => {
+            let root = adapter.skills_dir();
+            if !is_skill_path_within_root(path, &root) {
+                return Err(AppError::invalid_input(
+                    "Skill path is outside the agent skills directory",
+                ));
+            }
+            path.to_path_buf()
+        }
+        DeployIntent::Managed => deployment_target(
+            &adapter,
+            &sync_engine::target_dir_name(&source, &skill.name),
+            skill_id,
+            &existing_targets,
+        ),
+    };
     let configured_mode = store.get_setting("sync_mode").map_err(AppError::db)?;
     let mode = sync_engine::sync_mode_for_tool(tool, configured_mode.as_deref());
     let recorded_mode = match intent {
-        DeployIntent::AdoptExisting => None,
-        DeployIntent::Managed => store
-            .get_targets_for_skill(skill_id)
-            .unwrap_or_default()
-            .into_iter()
+        DeployIntent::AdoptExisting(_) => None,
+        DeployIntent::Managed => existing_targets
+            .iter()
             .find(|existing| {
                 existing.tool == tool && PathBuf::from(&existing.target_path) == target
             })
-            .map(|existing| existing.mode),
+            .map(|existing| existing.mode.clone()),
     };
     let policy = match intent {
-        DeployIntent::AdoptExisting => sync_engine::ReplacePolicy::UserConfirmed,
+        DeployIntent::AdoptExisting(_) => sync_engine::ReplacePolicy::UserConfirmed,
         DeployIntent::Managed => replace_policy(recorded_mode.as_deref()),
     };
-    if matches!(intent, DeployIntent::AdoptExisting) {
+    if matches!(intent, DeployIntent::AdoptExisting(_)) {
         // The directory at `target` may still be the import source of the very
         // skill being deployed (or of a sibling record): re-point those at
         // central BEFORE the replacement, so a failure partway through the
@@ -944,7 +982,7 @@ fn apply_add(
                 tool_key: tool_key.clone(),
                 mode: sync_engine::sync_mode_for_tool(tool_key, configured_mode.as_deref()),
                 source: source.clone(),
-                target: adapter.skills_dir().join(&target_name),
+                target: deployment_target(adapter, &target_name, skill_id, &existing_targets),
             });
         }
     }
