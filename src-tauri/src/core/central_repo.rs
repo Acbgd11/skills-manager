@@ -248,6 +248,9 @@ pub fn base_dir() -> PathBuf {
 
 /// The location a pending move will go to at the next launch, if any.
 pub fn pending_base_dir() -> Option<PathBuf> {
+    if base_dir_override_active() {
+        return None;
+    }
     let config = load_config();
     let requested = requested_base_from(&config);
     (live_base_from(&config) != requested).then_some(requested)
@@ -485,38 +488,30 @@ const REGENERABLE_FILES: &[&str] = &[
     "desktop.ini",
 ];
 
-/// Whether `path` (a direct child of the target) can be dropped safely:
-/// a regenerable file, the CLI bridge's `bin/`, or a directory tree holding
-/// only such things. Links are never followed or counted as debris.
-fn is_regenerable(path: &Path, at_root: bool) -> bool {
+/// Whether `path` can be dropped safely: a regenerable file, the CLI bridge's
+/// files in the default home's `bin/` (republished at every launch, so they
+/// must not block moving the library back home), or a directory holding only
+/// such things. Links are never followed or counted as debris, and anything
+/// that cannot be inspected is kept.
+fn is_regenerable(path: &Path) -> bool {
     let Ok(meta) = fs::symlink_metadata(path) else {
         return false;
     };
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if meta.is_file() {
-        return REGENERABLE_FILES.contains(&name);
+        let in_bridge_dir = path.parent() == Some(super::cli_bridge::bridge_dir().as_path());
+        return REGENERABLE_FILES.contains(&name)
+            || (in_bridge_dir && super::cli_bridge::is_bridge_file(name));
     }
     if !meta.is_dir() {
         return false;
     }
-    // The bridge lives in the default home's `bin/` and is republished at
-    // every launch, so it must not block moving the library back home.
-    let bridge_dir = at_root && name == "bin";
     let Ok(entries) = fs::read_dir(path) else {
         return false;
     };
-    entries.flatten().all(|entry| {
-        let child = entry.path();
-        if bridge_dir {
-            let child_name = entry.file_name();
-            let child_name = child_name.to_str().unwrap_or("");
-            let is_bridge = child_name.starts_with("skills-manager-cli") || child_name == ".version";
-            if is_bridge && entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                return true;
-            }
-        }
-        is_regenerable(&child, false)
-    })
+    entries
+        .into_iter()
+        .all(|entry| entry.is_ok_and(|entry| is_regenerable(&entry.path())))
 }
 
 /// Remove debris from a migration target so the move can proceed. All-or-
@@ -525,8 +520,13 @@ fn clear_regenerable_target(target: &Path) -> Result<()> {
     let Ok(entries) = fs::read_dir(target) else {
         return Ok(());
     };
-    let entries: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-    if !entries.iter().all(|path| is_regenerable(path, true)) {
+    let Ok(entries) = entries
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<std::io::Result<Vec<PathBuf>>>()
+    else {
+        return Ok(());
+    };
+    if !entries.iter().all(|path| is_regenerable(path)) {
         return Ok(());
     }
     for path in entries {
@@ -595,6 +595,12 @@ fn migrate_repo_if_needed(config: &mut RepoPathConfig, current_base: &Path) -> M
     // symlink), and a lexical mismatch would otherwise loop forever on
     // `migration_incomplete`, telling the user to empty their own library.
     if !source.exists() || paths_are_same_dir(&source, current_base) {
+        // A source that is gone while the target exists is a move that
+        // finished but was never recorded (crash or failed config save right
+        // after the rename): its links and DB paths still need repointing.
+        if !source.exists() && current_base.is_dir() {
+            config.repoint_from = Some(source.to_string_lossy().to_string());
+        }
         config.pending_migration_from = None;
         return MigrationOutcome::Proceed;
     }
@@ -758,10 +764,12 @@ pub fn ensure_central_repo(allow_migration: bool) -> Result<()> {
     // the shared config belongs to a different library and must not be applied
     // to — or override — the explicitly chosen root. The app's own startup never
     // sets an override before this point, so the #252 path is unaffected.
+    // Claim before looking at the marker: the app must hold the claim for its
+    // whole life, since the user may save a new path while it runs.
     if allow_migration
-        && config.pending_migration_from.is_some()
         && !base_dir_override_active()
         && claim_migration()
+        && config.pending_migration_from.is_some()
     {
         let pending_before = config.pending_migration_from.clone();
         let target = requested_base_from(&config);
@@ -866,24 +874,62 @@ mod tests {
     fn migration_clears_regenerable_leftovers_and_records_repoint() {
         // What an earlier session and the CLI bridge leave in a target: a
         // lock file, empty skeleton dirs, OS metadata, the bridge's `bin/`.
+        let _guard = test_base_dir_lock();
         let src = tempfile::tempdir().unwrap();
-        let dst = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        set_test_home_dir_override(Some(home.path().to_path_buf()));
+        let dst = home_base_dir(); // moving back to the default home
         fs::write(src.path().join("a.txt"), b"src").unwrap();
-        fs::write(dst.path().join(".skills-manager.lock"), b"pid=1").unwrap();
-        fs::write(dst.path().join(".DS_Store"), b"").unwrap();
-        fs::create_dir_all(dst.path().join("skills")).unwrap();
-        fs::create_dir_all(dst.path().join("cache/repos")).unwrap();
-        fs::create_dir_all(dst.path().join("bin")).unwrap();
-        fs::write(dst.path().join("bin/skills-manager-cli"), b"bin").unwrap();
-        fs::write(dst.path().join("bin/.version"), b"1.0").unwrap();
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(dst.join(".skills-manager.lock"), b"pid=1").unwrap();
+        fs::write(dst.join(".DS_Store"), b"").unwrap();
+        fs::create_dir_all(dst.join("skills")).unwrap();
+        fs::create_dir_all(dst.join("cache/repos")).unwrap();
+        let bridge = super::super::cli_bridge::bridge_path();
+        fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        fs::write(&bridge, b"bin").unwrap();
+        fs::write(bridge.with_file_name(".version"), b"1.0").unwrap();
 
-        let mut config = config_migrating(src.path(), dst.path());
-        let outcome = migrate_repo_if_needed(&mut config, dst.path());
+        let mut config = config_migrating(src.path(), &dst);
+        let outcome = migrate_repo_if_needed(&mut config, &dst);
+        set_test_home_dir_override(None);
 
         assert!(matches!(outcome, MigrationOutcome::Proceed));
         assert_eq!(config.pending_migration_from, None);
         assert!(config.repoint_from.is_some());
-        assert_eq!(fs::read(dst.path().join("a.txt")).unwrap(), b"src");
+        assert_eq!(fs::read(dst.join("a.txt")).unwrap(), b"src");
+    }
+
+    #[test]
+    fn a_bin_dir_outside_the_default_home_is_not_debris() {
+        // Only the default home's `bin/` holds the bridge; elsewhere a file
+        // with the bridge's name is the user's.
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("a.txt"), b"src").unwrap();
+        fs::create_dir_all(dst.path().join("bin")).unwrap();
+        fs::write(dst.path().join("bin/skills-manager-cli"), b"mine").unwrap();
+
+        let mut config = config_migrating(src.path(), dst.path());
+        let outcome = migrate_repo_if_needed(&mut config, dst.path());
+
+        assert!(matches!(outcome, MigrationOutcome::UseSource(_)));
+        assert!(dst.path().join("bin/skills-manager-cli").exists());
+    }
+
+    #[test]
+    fn a_move_that_finished_unrecorded_still_repoints() {
+        // Crash (or failed config save) right after the rename: the source is
+        // gone, the target holds the library, the marker is still pending.
+        let dst = tempfile::tempdir().unwrap();
+        let gone = dst.path().join("moved-away");
+        let mut config = config_migrating(&gone, dst.path());
+
+        let outcome = migrate_repo_if_needed(&mut config, dst.path());
+
+        assert!(matches!(outcome, MigrationOutcome::Proceed));
+        assert_eq!(config.pending_migration_from, None);
+        assert_eq!(config.repoint_from.as_deref(), Some(gone.to_string_lossy().as_ref()));
     }
 
     #[test]

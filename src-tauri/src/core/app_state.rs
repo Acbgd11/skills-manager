@@ -89,8 +89,10 @@ fn initialize_store_inner(
 
     if allow_migration {
         if let Some((from, to)) = central_repo::take_repoint_from() {
-            repoint_after_move(&store, &from, &to)?;
-            central_repo::clear_repoint_from()?;
+            // Keep the marker while anything failed, so the next launch retries.
+            if repoint_after_move(&store, &from, &to)? == 0 {
+                central_repo::clear_repoint_from()?;
+            }
         }
     }
 
@@ -184,7 +186,8 @@ impl StartupTimings {
 /// directories. Project deployments have no target records and startup sync
 /// only covers the active preset, so neither heals on its own. Only links that
 /// resolve into the old library are touched — never anything else in there.
-fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<()> {
+/// Returns how many links could not be inspected or repointed.
+fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<usize> {
     let rebase = |path: &str| -> Option<String> {
         let rel = Path::new(path).strip_prefix(from).ok()?;
         Some(to.join(rel).to_string_lossy().to_string())
@@ -206,6 +209,15 @@ fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<()> 
         }
     }
 
+    // Recorded deployments by exact path (nested ones included), then every
+    // entry of the agent and project skills roots, which also covers project
+    // deployments — those have no records.
+    let mut links: Vec<PathBuf> = store
+        .get_all_targets()?
+        .into_iter()
+        .filter(|target| target.mode == "symlink")
+        .map(|target| PathBuf::from(target.target_path))
+        .collect();
     let adapters = tool_adapters::all_tool_adapters(store);
     let mut roots: Vec<PathBuf> = adapters.iter().map(|a| a.skills_dir()).collect();
     for project in store.get_all_projects()? {
@@ -222,46 +234,62 @@ fn repoint_after_move(store: &SkillStore, from: &Path, to: &Path) -> Result<()> 
             }
         }
     }
-    roots.sort();
-    roots.dedup();
-
+    let mut failures = 0;
     for root in roots {
-        let Ok(entries) = std::fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let link = entry.path();
-            let Ok(pointee) = std::fs::read_link(&link) else {
-                continue;
-            };
-            let Ok(rel) = pointee.strip_prefix(from) else {
-                continue;
-            };
-            let moved = to.join(rel);
-            if !moved.exists() {
-                continue;
+        match std::fs::read_dir(&root) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(entry) => links.push(entry.path()),
+                        Err(_) => failures += 1,
+                    }
+                }
             }
-            if let Err(err) = sync_engine::sync_skill(
-                &moved,
-                &link,
-                sync_engine::SyncMode::Symlink,
-                sync_engine::ReplacePolicy::Recorded { mode: "symlink" },
-            ) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                failures += 1;
                 central_repo::record_startup_error(format!(
-                    "central repo: cannot repoint {} to {} ({err:#})",
-                    link.display(),
-                    moved.display()
+                    "central repo: cannot scan {} to repoint links ({err})",
+                    root.display()
                 ));
             }
         }
     }
-    Ok(())
+    links.sort();
+    links.dedup();
+
+    for link in links {
+        let Ok(pointee) = std::fs::read_link(&link) else {
+            continue;
+        };
+        let Ok(rel) = pointee.strip_prefix(from) else {
+            continue;
+        };
+        let moved = to.join(rel);
+        if !moved.exists() {
+            continue;
+        }
+        if let Err(err) = sync_engine::sync_skill(
+            &moved,
+            &link,
+            sync_engine::SyncMode::Symlink,
+            sync_engine::ReplacePolicy::Recorded { mode: "symlink" },
+        ) {
+            failures += 1;
+            central_repo::record_startup_error(format!(
+                "central repo: cannot repoint {} to {} ({err:#})",
+                link.display(),
+                moved.display()
+            ));
+        }
+    }
+    Ok(failures)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::skill_store::{ProjectRecord, SkillRecord};
+    use crate::core::skill_store::{ProjectRecord, SkillRecord, SkillTargetRecord};
 
     #[test]
     #[cfg(unix)]
@@ -270,6 +298,7 @@ mod tests {
         let from = tmp.path().join("old");
         let to = tmp.path().join("new");
         std::fs::create_dir_all(to.join("skills/s")).unwrap();
+        std::fs::create_dir_all(to.join("skills/cat/nested")).unwrap();
         let elsewhere = tmp.path().join("elsewhere");
         std::fs::create_dir_all(&elsewhere).unwrap();
 
@@ -318,7 +347,30 @@ mod tests {
             })
             .unwrap();
 
-        repoint_after_move(&store, &from, &to).unwrap();
+        // A nested recorded deployment (Hermes-style category dir), outside
+        // any scanned root and not in the active preset.
+        let nested = tmp.path().join("agent/cat/nested");
+        std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(from.join("skills/cat/nested"), &nested).unwrap();
+        store
+            .insert_target(&SkillTargetRecord {
+                id: "t".into(),
+                skill_id: "s".into(),
+                tool: "hermes".into(),
+                target_path: nested.to_string_lossy().into(),
+                mode: "symlink".into(),
+                status: "ok".into(),
+                synced_at: None,
+                last_error: None,
+                source_hash: None,
+            })
+            .unwrap();
+
+        assert_eq!(repoint_after_move(&store, &from, &to).unwrap(), 0);
+        assert_eq!(
+            std::fs::read_link(&nested).unwrap(),
+            to.join("skills/cat/nested")
+        );
 
         assert_eq!(
             std::fs::read_link(project_root.join("s")).unwrap(),
