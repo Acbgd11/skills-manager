@@ -36,8 +36,10 @@ struct InstalledPluginInfo {
     last_updated: Option<String>,
 }
 
-pub fn claude_config_dir() -> PathBuf {
-    if let Ok(value) = std::env::var("CLAUDE_CONFIG_DIR") {
+/// Pure function: resolve the config directory from a given env value
+/// (testable without touching process-level environment variables).
+pub fn claude_config_dir_from(env_value: Option<&str>) -> PathBuf {
+    if let Some(value) = env_value {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
@@ -46,6 +48,10 @@ pub fn claude_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".claude")
+}
+
+pub fn claude_config_dir() -> PathBuf {
+    claude_config_dir_from(std::env::var("CLAUDE_CONFIG_DIR").ok().as_deref())
 }
 
 /// "2026-09-26T18:36:13.904Z" -> "2026-09-26"
@@ -336,17 +342,35 @@ mod tests {
     }
 
     #[test]
-    fn claude_config_dir_prefers_env_var() {
-        // Save original value (if any) and restore after the test to avoid
-        // polluting other tests running in the same process.
-        let original = std::env::var("CLAUDE_CONFIG_DIR").ok();
-        std::env::set_var("CLAUDE_CONFIG_DIR", "D:\\claude-cfg-test");
-        assert_eq!(claude_config_dir(), PathBuf::from("D:\\claude-cfg-test"));
-        std::env::remove_var("CLAUDE_CONFIG_DIR");
-        assert!(claude_config_dir().ends_with(".claude"));
-        match original {
-            Some(v) => std::env::set_var("CLAUDE_CONFIG_DIR", v),
-            None => std::env::remove_var("CLAUDE_CONFIG_DIR"),
-        }
+    fn claude_config_dir_from_prefers_env_value() {
+        assert_eq!(
+            claude_config_dir_from(Some("D:\\claude-cfg-test")),
+            PathBuf::from("D:\\claude-cfg-test")
+        );
+    }
+
+    #[test]
+    fn claude_config_dir_from_ignores_whitespace_only_env_value() {
+        assert!(
+            claude_config_dir_from(Some("  "))
+                .ends_with(".claude"),
+            "whitespace-only env value should fall back to ~/.claude"
+        );
+    }
+
+    #[test]
+    fn claude_config_dir_from_ignores_empty_env_value() {
+        assert!(
+            claude_config_dir_from(Some("")).ends_with(".claude"),
+            "empty env value should fall back to ~/.claude"
+        );
+    }
+
+    #[test]
+    fn claude_config_dir_from_none_falls_back_to_home() {
+        assert!(
+            claude_config_dir_from(None).ends_with(".claude"),
+            "missing env value should fall back to ~/.claude"
+        );
     }
 }
