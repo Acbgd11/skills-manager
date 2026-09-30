@@ -231,6 +231,7 @@ The Windows app cannot create links inside WSL, so it can only copy skills there
 mkdir -p ~/.local/bin && curl -L -o ~/.local/bin/skills-manager-cli \
   https://github.com/xingkongliang/skills-manager/releases/latest/download/skills-manager-cli-Linux-x64
 chmod +x ~/.local/bin/skills-manager-cli
+export PATH="$HOME/.local/bin:$PATH"
 skills-manager-cli agents add-custom hermes-work --path ~/.hermes/profiles/work/skills
 skills-manager-cli skills install ./my-skill
 skills-manager-cli skills deploy my-skill --agent hermes-work

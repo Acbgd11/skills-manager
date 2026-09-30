@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../utils";
-import { PRESET_ICON_OPTIONS } from "../lib/presetIcons";
+import { PRESET_ICON_OPTIONS, getPresetIconOption } from "../lib/presetIcons";
 
 interface Props {
   open: boolean;
@@ -22,24 +22,30 @@ export function RenamePresetDialog({
   onRename,
 }: Props) {
   const { t } = useTranslation();
+  // The icon the sidebar actually shows — inferred from the name when none is stored.
+  const shownIcon = getPresetIconOption({
+    name: currentName,
+    description: currentDescription ?? null,
+    icon: currentIcon ?? null,
+  }).key;
   const [name, setName] = useState(currentName);
-  const [icon, setIcon] = useState(currentIcon || PRESET_ICON_OPTIONS[0].key);
+  const [icon, setIcon] = useState(shownIcon);
   const [description, setDescription] = useState(currentDescription || "");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (open) {
       setName(currentName);
-      setIcon(currentIcon || PRESET_ICON_OPTIONS[0].key);
+      setIcon(shownIcon);
       setDescription(currentDescription || "");
     }
-  }, [open, currentIcon, currentName, currentDescription]);
+  }, [open, shownIcon, currentName, currentDescription]);
 
   if (!open) return null;
 
   const unchanged =
     name.trim() === currentName &&
-    icon === (currentIcon || PRESET_ICON_OPTIONS[0].key) &&
+    icon === shownIcon &&
     description.trim() === (currentDescription || "").trim();
 
   const handleRename = async () => {
@@ -48,7 +54,13 @@ export function RenamePresetDialog({
     }
     setLoading(true);
     try {
-      await onRename(name.trim(), icon, description.trim() || undefined);
+      // Only send an icon the user picked: saving a name or description must
+      // not pin the inferred icon of a preset that has none stored.
+      await onRename(
+        name.trim(),
+        icon !== shownIcon ? icon : currentIcon || undefined,
+        description.trim() || undefined,
+      );
       onClose();
     } finally {
       setLoading(false);
