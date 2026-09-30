@@ -1193,21 +1193,49 @@ mod tests {
             .find(|a| a.key == "deepseek_harness")
             .expect("deepseek_harness adapter should exist");
 
+        // This test mutates a process-global variable, so restore it at the end.
+        let original_home = std::env::var_os("DSH_HOME");
+
         std::env::set_var("DSH_HOME", "D:\\dsh-test-home");
         assert_eq!(
             adapter.skills_dir(),
             PathBuf::from("D:\\dsh-test-home").join("skills")
         );
 
+        // The shared `~/.agents` root is not part of the DSH home: point
+        // `DSH_HOME` at a temp home that *does* contain `.agents/skills` and it
+        // must not surface as a scan dir. (The result may be empty or hold
+        // home-relative roots; what matters is that it does not follow the env
+        // var.)
+        let tmp = tempdir().unwrap();
+        let tmp_home = tmp.path().join("dsh-home");
+        std::fs::create_dir_all(tmp_home.join(".agents").join("skills")).unwrap();
+        std::env::set_var("DSH_HOME", &tmp_home);
+        for dir in adapter.additional_existing_scan_dirs() {
+            assert!(
+                !dir.starts_with(&tmp_home),
+                "additional scan dir {dir:?} followed DSH_HOME"
+            );
+        }
+
         std::env::remove_var("DSH_HOME");
         assert_eq!(
             adapter.skills_dir(),
             ToolAdapter::home().join(".dsh").join("skills")
         );
+
+        match original_home {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
+        }
     }
 
+    /// The project root is pinned to the dotted layout: it must not follow the
+    /// global path into `$DSH_HOME`. (The home-relativity of the shared
+    /// `~/.agents` discovery root is covered by
+    /// `dsh_adapter_resolves_env_home_and_fallback`.)
     #[test]
-    fn dsh_shared_agents_root_stays_home_relative() {
+    fn dsh_project_root_keeps_the_dotted_layout() {
         let adapter = default_tool_adapters()
             .into_iter()
             .find(|a| a.key == "deepseek_harness")
