@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version. Bump this when adding a new migration.
-const LATEST_VERSION: u32 = 8;
+const LATEST_VERSION: u32 = 9;
 
 /// Run all pending migrations on the database.
 ///
@@ -55,6 +55,7 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
         5 => migrate_v5_to_v6(conn),
         6 => migrate_v6_to_v7(conn),
         7 => migrate_v7_to_v8(conn),
+        8 => migrate_v8_to_v9(conn),
         _ => bail!("unknown migration version: {from_version}"),
     }
 }
@@ -317,6 +318,23 @@ fn migrate_v7_to_v8(conn: &Connection) -> Result<()> {
     conn.execute(
         "DELETE FROM settings WHERE key = 'project_default_export_agents'",
         [],
+    )?;
+    Ok(())
+}
+
+/// v9: translation cache for the bilingual UI. Independent of skill data —
+/// nothing here is ever written back into agent or plugin directories.
+fn migrate_v8_to_v9(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS skill_translations (
+            fingerprint    TEXT PRIMARY KEY,
+            kind           TEXT NOT NULL,
+            source_name    TEXT NOT NULL,
+            zh_name        TEXT NOT NULL,
+            zh_description TEXT NOT NULL,
+            model          TEXT NOT NULL,
+            created_at     TEXT NOT NULL
+        );",
     )?;
     Ok(())
 }

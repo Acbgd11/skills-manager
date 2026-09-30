@@ -1380,6 +1380,74 @@ impl SkillStore {
         };
         Ok(rows)
     }
+
+    // ── Translation cache ──
+
+    /// All cached translations, keyed by content fingerprint.
+    pub fn get_translations(
+        &self,
+    ) -> Result<std::collections::HashMap<String, super::translation_store::TranslationRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT fingerprint, kind, source_name, zh_name, zh_description, model, created_at
+             FROM skill_translations",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                super::translation_store::TranslationRecord {
+                    fingerprint: row.get(0)?,
+                    kind: row.get(1)?,
+                    source_name: row.get(2)?,
+                    zh_name: row.get(3)?,
+                    zh_description: row.get(4)?,
+                    model: row.get(5)?,
+                    created_at: row.get(6)?,
+                },
+            ))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let (fp, rec) = row?;
+            map.insert(fp, rec);
+        }
+        Ok(map)
+    }
+
+    /// Insert-or-replace a batch of translations. Callers only pass whole
+    /// batches that parsed cleanly; a failed batch must never land here.
+    pub fn upsert_translations(
+        &self,
+        records: &[super::translation_store::TranslationRecord],
+    ) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO skill_translations
+                    (fingerprint, kind, source_name, zh_name, zh_description, model, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(fingerprint) DO UPDATE SET
+                    kind=excluded.kind, source_name=excluded.source_name,
+                    zh_name=excluded.zh_name, zh_description=excluded.zh_description,
+                    model=excluded.model, created_at=excluded.created_at",
+            )?;
+            for r in records {
+                stmt.execute(rusqlite::params![
+                    r.fingerprint, r.kind, r.source_name, r.zh_name, r.zh_description,
+                    r.model, r.created_at
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn clear_translations(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM skill_translations", [])?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
