@@ -45,7 +45,6 @@ const AppContext = createContext<AppState | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const SKILL_UPDATE_TOAST_ID = "skill-update-available";
-  const APP_UPDATE_TOAST_ID = "app-update-available";
   const [presets, setPresets] = useState<Preset[]>([]);
   const [activePreset, setActivePreset] = useState<Preset | null>(null);
   const [viewedPresetId, setViewedPresetIdState] = useState<string | null>(() => {
@@ -64,7 +63,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [detailSkillId, setDetailSkillId] = useState<string | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
   const autoCheckInFlightRef = useRef(false);
-  const appUpdateCheckedRef = useRef(false);
   const lastUpdateNotificationRef = useRef<string | null>(null);
   const lastActivePresetIdRef = useRef<string | null>(null);
 
@@ -286,60 +284,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshAppUpdate = useCallback(async () => {
+    // Fork build: self-update is disabled. The backend's check_app_update
+    // always returns has_update=false, so this is a no-op that never
+    // raises a toast. Kept in the context interface for compatibility.
     const info = await api.checkAppUpdate();
     setAppUpdate(info);
     return info;
   }, []);
 
-  // Check for a newer app version on startup. This only ever *notifies* — the
-  // download and install stay behind the button in Settings, so the user
-  // decides whether to take an update. Deliberately unlike the skill
-  // auto-update above, which has an opt-in "apply automatically" setting.
-  //
-  // Failures are logged, never toasted: this runs unprompted on every launch,
-  // and users who cannot reach GitHub would otherwise get an error every time
-  // they open the app.
-  //
-  // The ref makes it once per process, not once per `loading` edge:
-  // `refreshAppData` flips `loading` on every call, and a file-change event or
-  // a manual reload would otherwise re-hit the GitHub API and re-raise the
-  // toast. An in-flight guard would not be enough — it only blocks overlap.
-  //
-  // Set inside the timer, not before it: `loading` flipping back to true within
-  // the delay (the file watcher emits a change event as it builds its initial
-  // watch set) tears this effect down and clears the pending timer, and marking
-  // it done up front would skip the check for the rest of the session.
-  useEffect(() => {
-    if (loading || appUpdateCheckedRef.current) return;
-    const timer = setTimeout(() => {
-      appUpdateCheckedRef.current = true;
-      refreshAppUpdate()
-        .then((info) => {
-          if (!info.has_update) return;
-          toast.info(
-            i18n.t("settings.updateAvailable", { version: info.latest_version }),
-            {
-              id: APP_UPDATE_TOAST_ID,
-              duration: 8000,
-              action: {
-                label: i18n.t("settings.viewUpdate"),
-                onClick: () => {
-                  if (!window.location.pathname.endsWith("/settings")) {
-                    window.history.pushState(null, "", "/settings");
-                    window.dispatchEvent(new PopStateEvent("popstate"));
-                  }
-                },
-              },
-            }
-          );
-        })
-        .catch((err) => {
-          console.error("Startup app update check failed:", err);
-        });
-    }, 3000);
-    return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
+  // App-version self-update is disabled in the fork build. The startup
+  // check that previously hit the GitHub API on every launch is removed;
+  // `refreshAppUpdate` is kept in the context interface for callers that
+  // still reference it, but the backend always returns has_update=false.
 
   // Check skill updates on startup (non-blocking, silent). When the user has
   // opted in via the Settings toggle, also apply any available updates.
