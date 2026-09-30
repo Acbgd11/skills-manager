@@ -34,6 +34,7 @@ struct InstalledPluginInfo {
     version: Option<String>,
     installed_at: Option<String>,
     last_updated: Option<String>,
+    install_path: Option<String>,
 }
 
 /// Pure function: resolve the config directory from a given env value
@@ -58,7 +59,9 @@ pub fn claude_config_dir() -> PathBuf {
 fn iso_date(value: Option<&str>) -> Option<String> {
     let s = value?.trim();
     if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
-        Some(s[..10].to_string())
+        // Use get(..10) instead of s[..10] to avoid panicking on multi-byte
+        // boundaries (a malformed UTF-8 edge at byte 10 would slice mid-char).
+        Some(s.get(..10)?.to_string())
     } else {
         None
     }
@@ -86,17 +89,33 @@ fn read_installed_plugins(config_dir: &Path) -> HashMap<String, InstalledPluginI
                 version: first.get("version").and_then(|v| v.as_str()).map(str::to_string),
                 installed_at: iso_date(first.get("installedAt").and_then(|v| v.as_str())),
                 last_updated: iso_date(first.get("lastUpdated").and_then(|v| v.as_str())),
+                install_path: first
+                    .get("installPath")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
             },
         );
     }
     map
 }
 
-/// Highest semver version directory inside a plugin dir; falls back to name order.
-fn newest_version_dir(plugin_dir: &Path) -> Option<PathBuf> {
-    let mut dirs: Vec<(Option<semver::Version>, PathBuf)> = Vec::new();
-    for entry in fs::read_dir(plugin_dir).ok()? {
-        let Ok(entry) = entry else { continue };
+/// Order version directories for a plugin by priority:
+/// 1. The directory pointed to by `installPath` (if it exists among the
+///    candidates) comes first.
+/// 2. Then semver-descending (so the highest version wins).
+/// 3. Then most-recently-modified mtime descending (replaces the old
+///    lexicographic fallback for git-SHA directory names that are not
+///    semver-parseable).
+///
+/// Returns an ordered Vec so the caller can fall back to the next candidate
+/// when the first has no skills (F3: don't make the whole group disappear).
+fn ordered_version_dirs(plugin_dir: &Path, install_path: Option<&str>) -> Vec<PathBuf> {
+    let mut entries: Vec<(Option<semver::Version>, Option<std::time::SystemTime>, PathBuf)> =
+        Vec::new();
+    let Ok(dir_iter) = fs::read_dir(plugin_dir) else {
+        return Vec::new();
+    };
+    for entry in dir_iter.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -105,15 +124,66 @@ fn newest_version_dir(plugin_dir: &Path) -> Option<PathBuf> {
         if name.starts_with('.') {
             continue;
         }
-        dirs.push((semver::Version::parse(&name).ok(), path));
+        let sem = semver::Version::parse(&name).ok();
+        let mtime = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok();
+        entries.push((sem, mtime, path));
     }
-    dirs.sort_by(|a, b| match (&a.0, &b.0) {
-        (Some(x), Some(y)) => x.cmp(y),
-        (Some(_), None) => std::cmp::Ordering::Greater,
-        (None, Some(_)) => std::cmp::Ordering::Less,
-        (None, None) => a.1.cmp(&b.1),
+
+    // Resolve the installPath target's file name for comparison.
+    let install_dir_name = install_path
+        .and_then(|p| {
+            // installPath may be absolute or relative; we compare by the final
+            // path component (the version directory name).
+            Path::new(p).file_name().map(|n| n.to_string_lossy().to_string())
+        });
+
+    let mut sorted: Vec<(u8, Option<semver::Version>, Option<std::time::SystemTime>, PathBuf)> =
+        entries
+            .into_iter()
+            .map(|(sem, mtime, path)| {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let is_install_target = install_dir_name
+                    .as_deref()
+                    .map(|target| target == name)
+                    .unwrap_or(false);
+                // Tuple: (rank, semver_option, mtime_option, path)
+                // rank 0 = installPath target, 1 = everything else
+                let rank: u8 = if is_install_target { 0 } else { 1 };
+                (rank, sem, mtime, path)
+            })
+            .collect();
+
+    sorted.sort_by(|a, b| {
+        // rank ascending (installPath first)
+        match a.0.cmp(&b.0) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+        // semver descending
+        match (&a.1, &b.1) {
+            (Some(x), Some(y)) => y.cmp(x),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+        .then_with(|| {
+            // mtime descending
+            match (&a.2, &b.2) {
+                (Some(x), Some(y)) => y.cmp(x),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        })
     });
-    dirs.pop().map(|(_, p)| p)
+
+    sorted.into_iter().map(|(_, _, _, path)| path).collect()
 }
 
 fn read_plugin_manifest(
@@ -134,35 +204,66 @@ fn read_plugin_manifest(
     (s("description"), s("homepage"), s("repository"), author)
 }
 
+/// Recursively discover skills under `skills_root`, bounded to `max_depth`
+/// levels below the root. A directory that is itself a valid skill dir
+/// (contains SKILL.md/skill.md) is recorded as a skill and **not** descended
+/// into further; a non-skill directory is descended, up to the bound.
+/// `relative_prefix` carries the path components from the cache root so
+/// `relative_path` naturally includes intermediate layers like
+/// `cache/<m>/<p>/<v>/skills/i18n/foo-zh`.
 fn skills_under(skills_root: &Path, relative_prefix: &Path) -> Vec<PluginSkillEntry> {
     let mut skills = Vec::new();
-    let Ok(entries) = fs::read_dir(skills_root) else {
-        return skills;
+    collect_skills_recursive(skills_root, relative_prefix, 0, &mut skills);
+    skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    skills
+}
+
+/// Maximum depth below `skills/` root for recursive discovery. The real-world
+/// nesting observed is `skills/i18n/<skill>/SKILL.md` (2 levels), so 3 covers
+/// that plus one more without an unbounded walk.
+const SKILL_SCAN_MAX_DEPTH: usize = 3;
+
+fn collect_skills_recursive(
+    dir: &Path,
+    relative_prefix: &Path,
+    depth: usize,
+    out: &mut Vec<PluginSkillEntry>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() || !is_valid_skill_dir(&path) {
+        if !path.is_dir() {
             continue;
         }
-        let meta = parse_skill_md(&path);
-        let Some(relative) = relative_prefix
-            .join(entry.file_name())
-            .to_str()
-            .map(|s| s.replace('\\', "/"))
-        else {
-            continue;
-        };
-        skills.push(PluginSkillEntry {
-            name: meta
-                .name
-                .clone()
-                .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string()),
-            description: meta.description.clone(),
-            relative_path: relative,
-        });
+        if is_valid_skill_dir(&path) {
+            // This directory is a skill — record it and do not descend further.
+            let meta = parse_skill_md(&path);
+            let Some(relative) = relative_prefix
+                .join(entry.file_name())
+                .to_str()
+                .map(|s| s.replace('\\', "/"))
+            else {
+                continue;
+            };
+            out.push(PluginSkillEntry {
+                name: meta
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string()),
+                description: meta.description.clone(),
+                relative_path: relative,
+            });
+        } else if depth < SKILL_SCAN_MAX_DEPTH {
+            // Not a skill directory — descend into it, carrying the deeper
+            // relative prefix so the final path includes the intermediate layer.
+            if let Some(child_prefix) = relative_prefix.join(entry.file_name()).to_str() {
+                let child_prefix = PathBuf::from(child_prefix);
+                collect_skills_recursive(&path, &child_prefix, depth + 1, out);
+            }
+        }
     }
-    skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    skills
 }
 
 pub fn scan_plugin_skills(config_dir: &Path) -> Vec<PluginSkillGroup> {
@@ -185,24 +286,43 @@ pub fn scan_plugin_skills(config_dir: &Path) -> Vec<PluginSkillGroup> {
             if !plugin.path().is_dir() || plugin_name.starts_with('.') {
                 continue;
             }
-            let Some(version_dir) = newest_version_dir(&plugin.path()) else {
-                continue;
-            };
-            let version = version_dir
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
             let info = installed.get(&format!("{plugin_name}@{market_name}"));
-            let (description, homepage, repository, author) = read_plugin_manifest(&version_dir);
-            let relative_prefix = Path::new("cache")
-                .join(&market_name)
-                .join(&plugin_name)
-                .join(&version)
-                .join("skills");
-            let skills = skills_under(&version_dir.join("skills"), &relative_prefix);
-            if skills.is_empty() {
+            let candidates =
+                ordered_version_dirs(&plugin.path(), info.and_then(|i| i.install_path.as_deref()));
+            if candidates.is_empty() {
                 continue;
             }
+            // Try each candidate version directory in priority order. If the
+            // first has no skills (e.g. a just-installed version whose skills
+            // directory is empty), fall back to the next instead of making the
+            // whole plugin group disappear (F3).
+            let mut chosen: Option<(
+                PathBuf,
+                String,
+                Vec<PluginSkillEntry>,
+            )> = None;
+            for version_dir in &candidates {
+                let version = version_dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let relative_prefix = Path::new("cache")
+                    .join(&market_name)
+                    .join(&plugin_name)
+                    .join(&version)
+                    .join("skills");
+                let skills = skills_under(&version_dir.join("skills"), &relative_prefix);
+                if !skills.is_empty() {
+                    chosen = Some((version_dir.clone(), version, skills));
+                    break;
+                }
+            }
+            let Some((version_dir, version, skills)) = chosen else {
+                // All candidates empty — still skip, but this is now only when
+                // every version dir genuinely has no skills.
+                continue;
+            };
+            let (description, homepage, repository, author) = read_plugin_manifest(&version_dir);
             groups.push(PluginSkillGroup {
                 marketplace: market_name.clone(),
                 plugin: plugin_name,
@@ -372,5 +492,139 @@ mod tests {
             claude_config_dir_from(None).ends_with(".claude"),
             "missing env value should fall back to ~/.claude"
         );
+    }
+
+    // ── F2: nested skill discovery ──
+
+    #[test]
+    fn discovers_nested_skills_in_subdirectory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // skills/i18n/foo-zh/SKILL.md — one level of nesting under skills/
+        // write_skill creates <dir>/<name>/SKILL.md, so we pass the i18n parent.
+        write_skill(
+            &root.join("plugins/cache/mkt/plug/1.0.0/skills/i18n"),
+            "foo-zh",
+            "Chinese",
+        );
+
+        let groups = scan_plugin_skills(root);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].skills.len(), 1, "nested skill discovered");
+        assert_eq!(groups[0].skills[0].name, "foo-zh");
+        assert!(
+            groups[0].skills[0]
+                .relative_path
+                .ends_with("skills/i18n/foo-zh"),
+            "relative_path includes intermediate layer: {}",
+            groups[0].skills[0].relative_path
+        );
+    }
+
+    #[test]
+    fn does_not_descend_into_skill_directory_that_is_itself_a_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // A skill dir that contains a nested SKILL.md child — the parent is
+        // the skill; the child should NOT be separately listed.
+        let skill_dir = root.join("plugins/cache/mkt/plug/1.0.0/skills/parent");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: parent\ndescription: top\n---\n\nBody\n",
+        )
+        .unwrap();
+        fs::create_dir_all(skill_dir.join("child")).unwrap();
+        fs::write(
+            skill_dir.join("child/SKILL.md"),
+            "---\nname: child\ndescription: nested\n---\n\nBody\n",
+        )
+        .unwrap();
+
+        let groups = scan_plugin_skills(root);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].skills.len(), 1, "parent recorded, child not double-counted");
+        assert_eq!(groups[0].skills[0].name, "parent");
+    }
+
+    #[test]
+    fn deep_non_skill_directory_produces_no_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // A directory 2 levels deep with no SKILL.md — no entries, no panic.
+        fs::create_dir_all(root.join("plugins/cache/mkt/plug/1.0.0/skills/a/b/c")).unwrap();
+        let groups = scan_plugin_skills(root);
+        assert!(groups.is_empty(), "no skills → no groups");
+    }
+
+    // ── F3: version directory selection ──
+
+    #[test]
+    fn install_path_directs_version_selection_over_semver() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // Two SHA-named dirs: "aaa111" (lexicographically smaller) and "zzz999".
+        // installPath points to "aaa111" — it should be chosen despite "zzz999"
+        // being lexicographically larger (the old bug).
+        let small = root.join("plugins/cache/mkt/plug/aaa111/skills");
+        let big = root.join("plugins/cache/mkt/plug/zzz999/skills");
+        write_skill(&small, "real-skill", "from small dir");
+        write_skill(&big, "other-skill", "from big dir");
+
+        // Sleep so the "small" dir is also older (mtime) to make sure it's
+        // installPath, not mtime, that drives selection.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::create_dir_all(root.join("plugins")).unwrap();
+        fs::write(
+            root.join("plugins/installed_plugins.json"),
+            r#"{"version":2,"plugins":{"plug@mkt":[{"scope":"user","version":"aaa111","installPath":"aaa111"}]}}"#,
+        )
+        .unwrap();
+
+        let groups = scan_plugin_skills(root);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].skills.len(), 1);
+        assert_eq!(groups[0].skills[0].name, "real-skill");
+    }
+
+    #[test]
+    fn falls_back_to_next_version_dir_when_first_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // newest (by mtime) has no skills; older has skills → should pick older
+        let newer = root.join("plugins/cache/mkt/plug/2.0.0/skills");
+        let older = root.join("plugins/cache/mkt/plug/1.0.0/skills");
+        fs::create_dir_all(&newer).unwrap(); // empty skills dir
+        write_skill(&older, "survivor", "from old dir");
+        // Make the newer dir actually newer in mtime
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(newer.join(".touch"), "").unwrap();
+
+        let groups = scan_plugin_skills(root);
+        assert_eq!(groups.len(), 1, "group does not disappear when newest is empty");
+        assert_eq!(groups[0].skills.len(), 1);
+        assert_eq!(groups[0].skills[0].name, "survivor");
+    }
+
+    #[test]
+    fn picks_semver_highest_when_no_install_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let v1 = root.join("plugins/cache/mkt/plug/1.0.0/skills");
+        let v2 = root.join("plugins/cache/mkt/plug/2.0.0/skills");
+        write_skill(&v1, "old", "v1");
+        write_skill(&v2, "new", "v2");
+        // No installPath in JSON → semver wins: 2.0.0 > 1.0.0
+        fs::create_dir_all(root.join("plugins")).unwrap();
+        fs::write(
+            root.join("plugins/installed_plugins.json"),
+            r#"{"version":2,"plugins":{"plug@mkt":[{"scope":"user","version":"2.0.0"}]}}"#,
+        )
+        .unwrap();
+
+        let groups = scan_plugin_skills(root);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].skills.len(), 1);
+        assert_eq!(groups[0].skills[0].name, "new");
     }
 }
