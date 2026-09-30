@@ -171,6 +171,7 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, fingerprint("plugin_skill", "brainstorming", Some("Design second")));
         assert_ne!(a, fingerprint("plugin_skill", "other", Some("Design first")));
+        assert_ne!(a, fingerprint("official_skill", "brainstorming", Some("Design first")));
         assert_eq!(a.len(), 64); // sha256 hex
     }
 
@@ -210,6 +211,15 @@ mod tests {
         let out = parse_translation_response(raw, &batch);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].fingerprint, "fp0");
+    }
+
+    #[test]
+    fn parses_bracket_inside_string_value() {
+        let batch = vec![input(0)];
+        let raw = r#"[{"i":0,"zh_name":"a]b","zh_description":"含右括号的说明"}]"#;
+        let out = parse_translation_response(raw, &batch);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].zh_name, "a]b");
     }
 
     #[test]
