@@ -53,7 +53,7 @@ import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-ma
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import { open as dialogOpen, confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
 import { useNavigate } from "react-router-dom";
-import { cn } from "../utils";
+import { cn, compactHomePath } from "../utils";
 import { useApp } from "../context/AppContext";
 import { useThemeContext } from "../context/ThemeContext";
 import { AgentIcon } from "../components/AgentIcon";
@@ -74,13 +74,6 @@ const IS_MACOS = navigator.userAgent.includes("Mac");
 const CAN_INSTALL_IN_APP = IS_WINDOWS || IS_MACOS;
 
 const RESTART_TOAST_ID = "app-update-restart";
-
-function compactHomePath(path: string) {
-  return path
-    .replace(/\/Users\/[^/]+/, "~")
-    .replace(/\/home\/[^/]+/, "~")
-    .replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~");
-}
 
 interface SortableAgentCardProps {
   agentKey: string;
