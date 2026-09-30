@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.40.2] - 2026-09-30
+
+### Release Overview
+- A batch of small fixes: preset switching, dark-mode diffs, collapsed agent icons, and a false "update available" after installing a skill's dependencies.
+
+### User-facing
+- **Choosing a preset while a skill's details are open now works** — The detail panel stayed on top, so the click looked like it did nothing until a reload. Thanks to @GoodScholar (#491, #485).
+- **Dark mode: the diff view is readable** — Changed lines kept their light red/green backgrounds under near-white text. Thanks to @GoodScholar (#492, #488).
+- **Agents hidden behind `+N` can be toggled** — Clicking `+N` opened the skill's details instead; it now expands the row so every agent can be installed or removed. Thanks to @GoodScholar (#490, #441).
+- **Installing dependencies no longer shows as an update** — Running `npm install` or creating a Python venv in a locally imported skill's source made the update check offer an update. `node_modules`, `.venv` and `venv` are now looked past by that check (#502).
+- **Windows: agent paths display with one separator style** — Paths read like `~\.workbuddy/skills`; display only, the folders were always correct (#495).
+
+### Developer & Governance
+- The dependency-folder skip is confined to the update check's tiebreaker. The content hash itself is unchanged, because repairs that replace a folder when hashes match would otherwise delete a locally installed `node_modules`.
+- The two copies of `compactHomePath` were merged into `src/utils.ts`.
 ## [1.40.1] - 2026-09-26
 
 ### Release Overview
