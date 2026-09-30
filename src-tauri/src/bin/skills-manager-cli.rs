@@ -65,6 +65,20 @@ enum ToolsCommand {
         #[arg(required = true)]
         agents: Vec<String>,
     },
+    /// Add a custom agent: a skills folder this app does not know by default
+    AddCustom {
+        /// Unique agent key, e.g. `hermes-work`
+        key: String,
+        /// Agent skills folder, e.g. `~/.hermes/profiles/work/skills`
+        #[arg(long)]
+        path: String,
+        /// Display name (defaults to the key)
+        #[arg(long)]
+        name: Option<String>,
+        /// Project-relative skills folder, e.g. `.hermes/skills`
+        #[arg(long)]
+        project_path: Option<String>,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -762,6 +776,27 @@ fn run_tools(args: ToolsArgs, store: &SkillStore, json: bool) -> anyhow::Result<
         }
         ToolsCommand::Disable { agents } => {
             print_json(&run_set_agents_enabled(store, &agents, false)?, json)
+        }
+        ToolsCommand::AddCustom {
+            key,
+            path,
+            name,
+            project_path,
+        } => {
+            tool_cmd::add_custom_tool_internal(
+                store,
+                &key,
+                name.as_deref().unwrap_or(&key),
+                &path,
+                project_path.as_deref(),
+            )
+            .map_err(map_app_err)?;
+            store.log_audit(AuditDraft::new("add_custom_agent").tool(key.clone()).ok());
+            let info = tool_service::list_tool_info(store)
+                .into_iter()
+                .find(|info| info.key == key.trim())
+                .ok_or_else(|| anyhow!("agent {key} was not saved"))?;
+            print_json(&info, json)
         }
     }
     Ok(())
@@ -3115,6 +3150,44 @@ mod tests {
     use app_lib::core::tool_adapters::{CustomToolDef, ToolCategory};
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn agents_add_custom_registers_the_agent_and_rejects_a_duplicate() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("skills.db")).unwrap();
+        let skills = tmp.path().join("hermes-work/skills");
+        let args = |key: &str| match Cli::try_parse_from([
+            "skills-manager-cli",
+            "agents",
+            "add-custom",
+            key,
+            "--path",
+            skills.to_str().unwrap(),
+            "--name",
+            "Hermes Work",
+            "--project-path",
+            ".hermes/skills",
+        ])
+        .unwrap()
+        .command
+        {
+            Commands::Tools(args) => args,
+            other => panic!("unexpected command {other:?}"),
+        };
+
+        run_tools(args("hermes-work"), &store, true).unwrap();
+        let custom = tool_service::get_custom_tools(&store);
+        assert_eq!(custom.len(), 1);
+        assert_eq!(custom[0].key, "hermes-work");
+        assert_eq!(custom[0].display_name, "Hermes Work");
+        assert_eq!(
+            custom[0].project_relative_skills_dir.as_deref(),
+            Some(".hermes/skills")
+        );
+
+        assert!(run_tools(args("hermes-work"), &store, true).is_err());
+        assert_eq!(tool_service::get_custom_tools(&store).len(), 1);
+    }
 
     #[test]
     fn deployment_dry_runs_refuse_a_foreign_target_without_changes() {

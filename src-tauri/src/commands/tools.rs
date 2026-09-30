@@ -392,38 +392,55 @@ pub async fn add_custom_tool(
 ) -> Result<(), AppError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let key = key.trim().to_string();
-        let display_name = display_name.trim().to_string();
-        let skills_dir = normalize_skills_dir_input(&skills_dir)?;
-        let project_relative_skills_dir = normalize_project_relative_skills_dir_input(
-            project_relative_skills_dir.as_deref().unwrap_or_default(),
-        )?;
-        if key.is_empty() || display_name.is_empty() || skills_dir.is_empty() {
-            return Err(AppError::invalid_input(
-                "Agent key, name and skills path are required",
-            ));
-        }
-
-        // Validate key uniqueness
-        let all = tool_adapters::all_tool_adapters(&store);
-        if all.iter().any(|a| a.key == key) {
-            return Err(AppError::invalid_input(format!(
-                "Agent key \"{key}\" already exists"
-            )));
-        }
-        let mut customs = get_custom_tools(&store);
-        customs.push(CustomToolDef {
-            key: key.clone(),
-            display_name,
-            skills_dir,
-            project_relative_skills_dir,
-            category: Default::default(),
-        });
-        set_custom_tools(&store, &customs)?;
-        reconcile_tool_sync_after_path_change(&store, &key);
-        Ok(())
+        add_custom_tool_internal(
+            &store,
+            &key,
+            &display_name,
+            &skills_dir,
+            project_relative_skills_dir.as_deref(),
+        )
     })
     .await?
+}
+
+/// Shared by the app and the CLI (`agents add-custom`, #501).
+pub fn add_custom_tool_internal(
+    store: &SkillStore,
+    key: &str,
+    display_name: &str,
+    skills_dir: &str,
+    project_relative_skills_dir: Option<&str>,
+) -> Result<(), AppError> {
+    let key = key.trim().to_string();
+    let display_name = display_name.trim().to_string();
+    let skills_dir = normalize_skills_dir_input(skills_dir)?;
+    let project_relative_skills_dir = normalize_project_relative_skills_dir_input(
+        project_relative_skills_dir.unwrap_or_default(),
+    )?;
+    if key.is_empty() || display_name.is_empty() || skills_dir.is_empty() {
+        return Err(AppError::invalid_input(
+            "Agent key, name and skills path are required",
+        ));
+    }
+
+    // Validate key uniqueness
+    let all = tool_adapters::all_tool_adapters(store);
+    if all.iter().any(|a| a.key == key) {
+        return Err(AppError::invalid_input(format!(
+            "Agent key \"{key}\" already exists"
+        )));
+    }
+    let mut customs = get_custom_tools(store);
+    customs.push(CustomToolDef {
+        key: key.clone(),
+        display_name,
+        skills_dir,
+        project_relative_skills_dir,
+        category: Default::default(),
+    });
+    set_custom_tools(store, &customs)?;
+    reconcile_tool_sync_after_path_change(store, &key);
+    Ok(())
 }
 
 #[tauri::command]

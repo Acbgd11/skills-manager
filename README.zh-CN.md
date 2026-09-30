@@ -202,7 +202,7 @@ npm run cli -- skills adopt ~/.claude/skills --dry-run
 
 可用命令分组：
 - `repo`：查看或修改当前 base directory
-- `agents`（兼容别名 `tools`）：列出 Agent，并全局启用或禁用 Agent
+- `agents`（兼容别名 `tools`）：列出 Agent、全局启用或禁用 Agent，以及添加自定义 Agent（`add-custom`）
 - `skills`：管理中央库、标签，以及 skill 在各 Agent 中的真实部署
 - `presets`：创建、修改、删除、整理、部署或撤下 Preset
 - `git`：操作 git 管理的 `skills/` 仓库（`clone`、`pull`、`push`、`commit`、`versions`、`restore`）
@@ -213,6 +213,19 @@ npm run cli -- skills adopt ~/.claude/skills --dry-run
 
 ```bash
 npm run -s cli -- --skills-root /path/to/my-skills --json skills list
+```
+
+#### Agent 在 WSL 里
+
+Windows 版应用无法在 WSL 里建链接，只能复制。如果你的 agent 都装在 WSL 里，请在 WSL 内直接使用 Linux 版 CLI：它在 WSL 里维护自己的技能库，并用真正的软链接部署：
+
+```bash
+mkdir -p ~/.local/bin && curl -L -o ~/.local/bin/skills-manager-cli \
+  https://github.com/xingkongliang/skills-manager/releases/latest/download/skills-manager-cli-Linux-x64
+chmod +x ~/.local/bin/skills-manager-cli
+skills-manager-cli agents add-custom hermes-work --path ~/.hermes/profiles/work/skills
+skills-manager-cli skills install ./my-skill
+skills-manager-cli skills deploy my-skill --agent hermes-work
 ```
 
 #### 二进制放在哪

@@ -210,7 +210,7 @@ commands, including `skills deploy/undeploy/sync/remove/adopt` and
 
 Available command groups:
 - `repo` — inspect or change the configured base directory
-- `agents` (`tools` alias) — list agents and globally enable or disable them
+- `agents` (`tools` alias) — list agents, globally enable or disable them, and add custom agents (`add-custom`)
 - `skills` — manage the central library and real per-agent deployments (`deploy / undeploy / status`)
 - `presets` — create, update, delete, organize, deploy, undeploy, and inspect presets
 - `git` — operate on the git-backed `skills/` repository (`clone`, `pull`, `push`, `commit`, `versions`, `restore`)
@@ -221,6 +221,19 @@ Extra flags:
 
 ```bash
 npm run -s cli -- --skills-root /path/to/my-skills --json skills list
+```
+
+#### Agents inside WSL
+
+The Windows app cannot create links inside WSL, so it can only copy skills there. If your agents live in WSL, run the Linux CLI inside WSL instead — it keeps its own library there and deploys with real symlinks:
+
+```bash
+mkdir -p ~/.local/bin && curl -L -o ~/.local/bin/skills-manager-cli \
+  https://github.com/xingkongliang/skills-manager/releases/latest/download/skills-manager-cli-Linux-x64
+chmod +x ~/.local/bin/skills-manager-cli
+skills-manager-cli agents add-custom hermes-work --path ~/.hermes/profiles/work/skills
+skills-manager-cli skills install ./my-skill
+skills-manager-cli skills deploy my-skill --agent hermes-work
 ```
 
 #### Where the binary lives
