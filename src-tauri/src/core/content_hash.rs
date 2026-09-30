@@ -19,7 +19,9 @@ fn is_ignored(name: &str) -> bool {
 /// in the content hash — a directory that holds them is not interchangeable
 /// with one that doesn't, and repairs that replace a directory on hash
 /// equality must keep seeing the difference. Only the update-check tiebreaker
-/// ([`hash_directory_eol_insensitive`]) looks past them (#502).
+/// ([`hash_directory_eol_insensitive`]) looks past them (#502). The cost is
+/// that an edit to a file a skill keeps under a directory with one of these
+/// names goes unnoticed by that tiebreaker — nobody authors skill files there.
 const DEPENDENCY_DIRS: &[&str] = &["node_modules", ".venv", "venv"];
 
 /// One file in a skill's canonical "content scope" — the set of files that
@@ -80,7 +82,10 @@ fn walk_content_files(dir: &Path, strict: bool, skip_deps: bool) -> Result<Vec<C
     for result in WalkDir::new(dir).into_iter().filter_entry(|e| {
         let name = e.file_name().to_string_lossy();
         !is_ignored(&name)
-            && !(skip_deps && e.file_type().is_dir() && DEPENDENCY_DIRS.contains(&name.as_ref()))
+            && !(skip_deps
+                && e.depth() > 0
+                && e.file_type().is_dir()
+                && DEPENDENCY_DIRS.contains(&name.as_ref()))
     }) {
         match result {
             Ok(entry) if entry.file_type().is_file() => entries.push(entry),
@@ -307,6 +312,18 @@ mod tests {
 
         assert_eq!(hash_directory_eol_insensitive(tmp.path()).unwrap(), loose);
         assert_ne!(hash_directory(tmp.path()).unwrap(), strict);
+    }
+
+    /// The skip applies below the root: a skill whose own directory happens to
+    /// be named `venv` still hashes its content.
+    #[test]
+    fn a_skill_directory_named_like_a_dependency_dir_is_still_hashed() {
+        let tmp = tempdir().unwrap();
+        let skill = tmp.path().join("venv");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "# hello").unwrap();
+
+        assert!(hash_directory_eol_insensitive(&skill).is_ok());
     }
 
     /// Project-workspace skills may now be symlinks to the central library
