@@ -48,7 +48,7 @@ export function Sidebar() {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  const { presets, viewedPreset, setViewedPresetId, refreshPresets, refreshManagedSkills, projects, refreshProjects, tools, managedSkills, appUpdate } = useApp();
+  const { presets, viewedPreset, setViewedPresetId, closeSkillDetail, refreshPresets, refreshManagedSkills, projects, refreshProjects, tools, managedSkills, appUpdate } = useApp();
   const [showCreate, setShowCreate] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; icon?: string | null } | null>(null);
@@ -172,6 +172,7 @@ export function Sidebar() {
   ];
 
   const handleSwitchPreset = (id: string) => {
+    closeSkillDetail();
     setViewedPresetId(id);
     if (location.pathname !== "/my-skills") {
       navigate("/my-skills");
