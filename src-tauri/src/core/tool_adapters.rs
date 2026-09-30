@@ -867,7 +867,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             key: "deepseek_harness".into(),
             display_name: "DeepSeek Harness".into(),
             relative_skills_dir: "skills".into(),
-            relative_detect_dir: "skills".into(),
+            relative_detect_dir: String::new(),
             additional_scan_dirs: vec![".agents/skills".into()],
             override_skills_dir: None,
             category: ToolCategory::Coding,
@@ -1173,7 +1173,11 @@ mod tests {
         // Relative to the DSH home — `$DSH_HOME`, or `~/.dsh` when unset — so
         // the deploy target is `<home>/skills`.
         assert_eq!(adapter.relative_skills_dir, "skills");
-        assert_eq!(adapter.relative_detect_dir, "skills");
+        // Detection checks the home root itself (empty relative_detect_dir),
+        // not the `skills/` subdirectory: per spec §3.2, DSH is "installed" as
+        // soon as its home dir exists, even if `skills/` hasn't been created
+        // yet (avoids a chicken-and-egg where DSH never appears).
+        assert_eq!(adapter.relative_detect_dir, "");
         // The project root it ranks highest is `<project>/.dsh/skills`: it keeps
         // the dotted layout and must not follow the global path into
         // `$DSH_HOME`, so it is pinned explicitly.

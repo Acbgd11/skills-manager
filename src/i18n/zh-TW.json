@@ -1032,6 +1032,8 @@
     "openRepo": "開啟儲存庫",
     "empty": "未發現外掛技能",
     "loading": "正在掃描外掛…",
+    "loadError": "載入外掛技能清單失敗",
+    "searchPlaceholder": "搜尋技能…",
     "documentError": "無法讀取該技能文件"
   }
 }

@@ -1116,6 +1116,8 @@
     "openRepo": "Open repository",
     "empty": "No plugin skills found",
     "loading": "Scanning plugins…",
+    "loadError": "Failed to load plugin skills",
+    "searchPlaceholder": "Search skills…",
     "documentError": "Unable to read this skill document"
   }
 }

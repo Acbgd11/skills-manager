@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Loader2,
   Package,
+  Search,
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "../utils";
@@ -27,6 +28,7 @@ interface PluginSkillsSectionProps {
 
 interface DocState {
   open: boolean;
+  path: string;
   name: string;
   content: string | null;
   error: boolean;
@@ -42,8 +44,10 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
   const [showOfficial, setShowOfficial] = useState(true);
   const [showPlugins, setShowPlugins] = useState(true);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [query, setQuery] = useState("");
   const [doc, setDoc] = useState<DocState>({
     open: false,
+    path: "",
     name: "",
     content: null,
     error: false,
@@ -59,7 +63,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
       if (requestRef.current === requestId) setData(dto);
     } catch (e) {
       if (requestRef.current === requestId) {
-        setError(getErrorMessage(e, t("pluginSkills.documentError")));
+        setError(getErrorMessage(e, t("pluginSkills.loadError")));
       }
     } finally {
       if (requestRef.current === requestId) setLoading(false);
@@ -73,6 +77,45 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
       requestRef.current += 1;
     };
   }, [agentKey, load]);
+
+  // F4: filter by query across name, description, and plugin (group name).
+  // When a query is active, matching entries auto-expand their containing group.
+  const normalizedQuery = query.trim().toLowerCase();
+  const matches = useCallback(
+    (entry: PluginSkillEntry, group?: PluginSkillGroup) => {
+      if (!normalizedQuery) return true;
+      if (entry.name.toLowerCase().includes(normalizedQuery)) return true;
+      if (entry.description?.toLowerCase().includes(normalizedQuery)) return true;
+      if (group?.plugin.toLowerCase().includes(normalizedQuery)) return true;
+      return false;
+    },
+    [normalizedQuery]
+  );
+
+  const filteredOfficial = useMemo(() => {
+    if (!data) return [];
+    return data.official.filter((e) => matches(e));
+  }, [data, matches]);
+
+  const filteredGroups = useMemo(() => {
+    if (!data) return [];
+    return data.groups
+      .map((g) => ({
+        ...g,
+        skills: g.skills.filter((e) => matches(e, g)),
+      }))
+      .filter((g) => g.skills.length > 0 || g.plugin.toLowerCase().includes(normalizedQuery));
+  }, [data, matches, normalizedQuery]);
+
+  // When query is non-empty, auto-expand all groups that have matching skills.
+  const effectiveCollapsed = useMemo(() => {
+    if (!normalizedQuery) return collapsed;
+    const expanded: Record<string, boolean> = {};
+    for (const gkey of Object.keys(collapsed)) {
+      expanded[gkey] = false; // expanded = not collapsed
+    }
+    return expanded;
+  }, [collapsed, normalizedQuery]);
 
   if (agentKey !== "claude_code") return null;
 
@@ -93,23 +136,21 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
 
   if (!data) return null;
 
-  const groups = data.groups;
-  const official = data.official;
-  const hasAnything = groups.length > 0 || official.length > 0;
+  const hasAnything = filteredGroups.length > 0 || filteredOfficial.length > 0;
 
   const openDoc = (entry: PluginSkillEntry) => {
-    setDoc({ open: true, name: entry.name, content: null, error: false });
+    setDoc({ open: true, path: entry.relative_path, name: entry.name, content: null, error: false });
     getPluginSkillDocument(entry.relative_path)
       .then((res) => {
         setDoc((prev) =>
-          prev.open && prev.name === entry.name
+          prev.open && prev.path === entry.relative_path
             ? { ...prev, content: res.content }
             : prev
         );
       })
       .catch(() => {
         setDoc((prev) =>
-          prev.open && prev.name === entry.name
+          prev.open && prev.path === entry.relative_path
             ? { ...prev, error: true }
             : prev
         );
@@ -117,7 +158,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
   };
 
   const closeDoc = () =>
-    setDoc({ open: false, name: "", content: null, error: false });
+    setDoc({ open: false, path: "", name: "", content: null, error: false });
 
   const toggleGroup = (key: string) =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -185,15 +226,26 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
       <h2 className="flex items-center gap-2 text-[14px] font-semibold text-primary">
         <Package className="h-4 w-4 text-muted" />
         {t("pluginSkills.title")}
-        {hasAnything ? null : null}
       </h2>
 
-      {!hasAnything ? (
+      {!hasAnything && !normalizedQuery ? (
         <p className="px-1 text-[13px] text-muted">{t("pluginSkills.empty")}</p>
       ) : (
         <div className="flex flex-col gap-3">
+          {/* Search input */}
+          <div className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-background px-2.5 py-1.5">
+            <Search className="h-3.5 w-3.5 shrink-0 text-muted" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("pluginSkills.searchPlaceholder")}
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-secondary outline-none placeholder:text-faint"
+            />
+          </div>
+
           {/* Official skills block */}
-          {official.length > 0 ? (
+          {filteredOfficial.length > 0 ? (
             <div className="rounded-xl border border-border-subtle bg-bg-secondary">
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
@@ -207,19 +259,19 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
                     <ChevronRight className="h-3.5 w-3.5" />
                   )}
                   {t("pluginSkills.officialTitle")}
-                  <span className="app-badge">{official.length}</span>
+                  <span className="app-badge">{filteredOfficial.length}</span>
                 </button>
               </div>
               {showOfficial ? (
                 <div className="flex flex-col pb-1">
-                  {official.map(renderOfficialRow)}
+                  {filteredOfficial.map(renderOfficialRow)}
                 </div>
               ) : null}
             </div>
           ) : null}
 
           {/* Plugin skills block */}
-          {groups.length > 0 ? (
+          {filteredGroups.length > 0 ? (
             <div className="rounded-xl border border-border-subtle bg-bg-secondary">
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
@@ -233,14 +285,14 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
                     <ChevronRight className="h-3.5 w-3.5" />
                   )}
                   {t("pluginSkills.pluginsTitle")}
-                  <span className="app-badge">{groups.length}</span>
+                  <span className="app-badge">{filteredGroups.length}</span>
                 </button>
               </div>
               {showPlugins ? (
                 <div className="flex flex-col gap-1 pb-1">
-                  {groups.map((group) => {
+                  {filteredGroups.map((group) => {
                     const gkey = `${group.marketplace}/${group.plugin}`;
-                    const isCollapsed = collapsed[gkey] ?? false;
+                    const isCollapsed = effectiveCollapsed[gkey] ?? false;
                     const repoUrl = group.repository ?? group.homepage;
                     return (
                       <div key={gkey} className="px-1">

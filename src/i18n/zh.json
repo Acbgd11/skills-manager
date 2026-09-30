@@ -1116,6 +1116,8 @@
     "openRepo": "打开仓库",
     "empty": "未发现插件技能",
     "loading": "正在扫描插件…",
+    "loadError": "加载插件技能列表失败",
+    "searchPlaceholder": "搜索技能…",
     "documentError": "无法读取该技能文档"
   }
 }
