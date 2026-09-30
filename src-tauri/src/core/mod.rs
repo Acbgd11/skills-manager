@@ -19,6 +19,7 @@ pub mod merge;
 pub mod migrations;
 pub mod panic_log;
 pub mod path_guard;
+pub mod plugin_scanner;
 pub mod project_scanner;
 pub mod removals;
 pub mod repo_lock;
