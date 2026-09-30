@@ -33,6 +33,7 @@ import type { ManagedSkill, ProjectSkill } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
 import { getTagActiveColor, getTagColor, pruneStaleTagFilters, UNTAGGED_FILTER } from "../lib/skillTags";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
+import { PluginSkillsSection } from "../components/PluginSkillsSection";
 import { useMultiSelect } from "../hooks/useMultiSelect";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import type { WorkspaceConfig } from "./workspaceConfigs";
@@ -897,6 +898,9 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
               />
               {currentTool.display_name}
               <span className="app-badge">{localSkills.length}</span>
+              <span className={cn("rounded-full px-2 py-0.5 text-[12px] font-medium", "bg-surface-hover text-muted")}>
+                {t("pluginSkills.personalBadge")}
+              </span>
             </h1>
             <p className="mt-1 truncate text-[13px] text-muted" title={currentTool.skills_dir}>
               {compactHomePath(currentTool.skills_dir)}
@@ -977,6 +981,10 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
             </button>
           </div>
         </div>
+
+        {currentTool?.key === "claude_code" && (
+          <PluginSkillsSection agentKey={currentTool.key} />
+        )}
 
         {allLocalTags.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">

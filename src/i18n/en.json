@@ -1101,5 +1101,21 @@
       "deletedLocalBatch": "{{count}} local skills deleted",
       "deleteLocalBatchFailed": "{{count}} local skills failed to delete"
     }
+  },
+  "pluginSkills": {
+    "title": "Skills from plugins & official sources",
+    "officialTitle": "Official skills",
+    "pluginsTitle": "Plugin skills",
+    "personalBadge": "Personal",
+    "readOnly": "Read-only",
+    "marketplace": "Marketplace",
+    "version": "Version",
+    "installedAt": "Installed",
+    "updatedAt": "Updated",
+    "author": "Author",
+    "openRepo": "Open repository",
+    "empty": "No plugin skills found",
+    "loading": "Scanning plugins…",
+    "documentError": "Unable to read this skill document"
   }
 }

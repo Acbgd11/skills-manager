@@ -1101,5 +1101,21 @@
       "deletedLocalBatch": "已删除 {{count}} 个本地 Skill",
       "deleteLocalBatchFailed": "{{count}} 个本地 Skill 删除失败"
     }
+  },
+  "pluginSkills": {
+    "title": "来自插件与官方的技能",
+    "officialTitle": "官方技能",
+    "pluginsTitle": "插件技能",
+    "personalBadge": "个人",
+    "readOnly": "只读",
+    "marketplace": "市场",
+    "version": "版本",
+    "installedAt": "安装于",
+    "updatedAt": "更新于",
+    "author": "作者",
+    "openRepo": "打开仓库",
+    "empty": "未发现插件技能",
+    "loading": "正在扫描插件…",
+    "documentError": "无法读取该技能文档"
   }
 }

@@ -1017,5 +1017,21 @@
       "deletedLocalBatch": "已刪除 {{count}} 個本機 Skill",
       "deleteLocalBatchFailed": "{{count}} 個本機 Skill 刪除失敗"
     }
+  },
+  "pluginSkills": {
+    "title": "來自外掛與官方的技能",
+    "officialTitle": "官方技能",
+    "pluginsTitle": "外掛技能",
+    "personalBadge": "個人",
+    "readOnly": "唯讀",
+    "marketplace": "市場",
+    "version": "版本",
+    "installedAt": "安裝於",
+    "updatedAt": "更新於",
+    "author": "作者",
+    "openRepo": "開啟儲存庫",
+    "empty": "未發現外掛技能",
+    "loading": "正在掃描外掛…",
+    "documentError": "無法讀取該技能文件"
   }
 }
