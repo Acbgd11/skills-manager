@@ -63,7 +63,50 @@ impl ToolAdapter {
         dirs::home_dir().expect("Cannot determine home directory")
     }
 
-    fn candidate_paths(relative: &str) -> Vec<PathBuf> {
+    /// Application-specific data root: DSH reads `$DSH_HOME` and falls back to
+    /// `~/.dsh` when it is unset or blank (spec §3.2). It applies to the primary
+    /// skills root and to install detection only — `additional_scan_dirs` (the
+    /// shared `~/.agents` root) stay home-relative, as upstream has them.
+    fn root_override(key: &str) -> Option<PathBuf> {
+        match key {
+            "deepseek_harness" => {
+                if let Ok(value) = std::env::var("DSH_HOME") {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        return Some(PathBuf::from(trimmed));
+                    }
+                }
+                Some(Self::home().join(".dsh"))
+            }
+            _ => None,
+        }
+    }
+
+    fn base_dir(&self) -> PathBuf {
+        Self::root_override(&self.key).unwrap_or_else(Self::home)
+    }
+
+    /// Candidate resolution for a relative path under the primary root. Use
+    /// `home_candidate_paths` for `additional_scan_dirs`.
+    fn candidate_paths(&self, relative: &str) -> Vec<PathBuf> {
+        let mut candidates = vec![self.base_dir().join(relative)];
+
+        if let Some(suffix) = relative.strip_prefix(".config/") {
+            if let Some(config_dir) = dirs::config_dir() {
+                let config_path = config_dir.join(suffix);
+                if !candidates.contains(&config_path) {
+                    candidates.push(config_path);
+                }
+            }
+        }
+
+        candidates
+    }
+
+    /// Home-relative candidate resolution, for `additional_scan_dirs` only:
+    /// those roots (e.g. the shared `~/.agents/skills`) are not part of an app
+    /// data root that moves with an env var.
+    fn home_candidate_paths(relative: &str) -> Vec<PathBuf> {
         let mut candidates = vec![Self::home().join(relative)];
 
         if let Some(suffix) = relative.strip_prefix(".config/") {
@@ -90,7 +133,7 @@ impl ToolAdapter {
         if let Some(ref abs) = self.override_skills_dir {
             return PathBuf::from(abs);
         }
-        let candidates = Self::candidate_paths(&self.relative_skills_dir);
+        let candidates = self.candidate_paths(&self.relative_skills_dir);
         Self::select_existing_or_default(&candidates)
     }
 
@@ -117,7 +160,7 @@ impl ToolAdapter {
     pub fn additional_existing_scan_dirs(&self) -> Vec<PathBuf> {
         let mut dirs = Vec::new();
         for rel in &self.additional_scan_dirs {
-            let candidates = Self::candidate_paths(rel);
+            let candidates = Self::home_candidate_paths(rel);
             for c in candidates {
                 if c.exists() && !dirs.contains(&c) {
                     dirs.push(c);
@@ -133,7 +176,7 @@ impl ToolAdapter {
         if self.is_custom || self.override_skills_dir.is_some() {
             return true;
         }
-        Self::candidate_paths(&self.relative_detect_dir)
+        self.candidate_paths(&self.relative_detect_dir)
             .iter()
             .any(|path| path.exists())
     }
@@ -805,28 +848,32 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
         ToolAdapter {
             // DeepSeek Harness resolves its home as `$DSH_HOME` or `~/.dsh`
             // (`packages/util/home-paths/src/index.ts`) and scans `skills`
-            // beneath it, so the deploy target is `~/.dsh/skills`.
+            // beneath it. This adapter is the one exception to "adapters read
+            // no env vars": `root_override` supplies that home, so the deploy
+            // target is `$DSH_HOME/skills`, falling back to `~/.dsh/skills`.
             //
             // It also reads the shared `~/.agents/skills` root (`$DSH_AGENTS_HOME`
             // or `~/.agents`) — discovery only, like Codex and Copilot, so a
             // deployment lands in its own directory and cannot be mistaken for
-            // another agent's.
+            // another agent's. That root is not part of the DSH home and stays
+            // home-relative; it must not follow `DSH_HOME`.
             //
             // Project roots are `<project>/.dsh/skills` and
             // `<project>/.agents/skills`; the former is the higher-ranked of the
-            // two and matches the global path, so no project override is needed.
+            // two, so it is pinned explicitly and keeps the dotted layout
+            // instead of following the global path into `$DSH_HOME`.
             // Verified against `packages/skill/skill-filesystem/src/index.ts`
             // rather than the README alone.
             key: "deepseek_harness".into(),
             display_name: "DeepSeek Harness".into(),
-            relative_skills_dir: ".dsh/skills".into(),
-            relative_detect_dir: ".dsh".into(),
+            relative_skills_dir: "skills".into(),
+            relative_detect_dir: "skills".into(),
             additional_scan_dirs: vec![".agents/skills".into()],
             override_skills_dir: None,
             category: ToolCategory::Coding,
             is_custom: false,
             recursive_scan: false,
-            project_relative_skills_dir: None,
+            project_relative_skills_dir: Some(".dsh/skills".into()),
         },
         ToolAdapter {
             // The GitLab Duo CLI (launched as `glab duo cli`) resolves its
@@ -1004,10 +1051,11 @@ pub fn enabled_installed_adapters(
 #[cfg(test)]
 mod tests {
     use super::{
-        CustomToolDef, ToolCategory, all_tool_adapters, default_tool_adapters,
+        CustomToolDef, ToolAdapter, ToolCategory, all_tool_adapters, default_tool_adapters,
         find_adapter_with_store,
     };
     use crate::core::skill_store::SkillStore;
+    use std::path::PathBuf;
 
     use tempfile::tempdir;
 
@@ -1122,10 +1170,13 @@ mod tests {
             .find(|adapter| adapter.key == "deepseek_harness")
             .expect("deepseek_harness adapter should exist");
 
-        assert_eq!(adapter.relative_skills_dir, ".dsh/skills");
-        assert_eq!(adapter.relative_detect_dir, ".dsh");
-        // The project root it ranks highest is `<project>/.dsh/skills`, which
-        // matches the global path, so it needs no override.
+        // Relative to the DSH home — `$DSH_HOME`, or `~/.dsh` when unset — so
+        // the deploy target is `<home>/skills`.
+        assert_eq!(adapter.relative_skills_dir, "skills");
+        assert_eq!(adapter.relative_detect_dir, "skills");
+        // The project root it ranks highest is `<project>/.dsh/skills`: it keeps
+        // the dotted layout and must not follow the global path into
+        // `$DSH_HOME`, so it is pinned explicitly.
         assert_eq!(adapter.project_relative_skills_dir(), ".dsh/skills");
         // Shared root: discovery only, never a deploy target.
         assert!(adapter
@@ -1133,6 +1184,39 @@ mod tests {
             .contains(&".agents/skills".to_string()));
         assert!(!adapter.is_custom);
         assert_eq!(adapter.category, ToolCategory::Coding);
+    }
+
+    #[test]
+    fn dsh_adapter_resolves_env_home_and_fallback() {
+        let adapter = default_tool_adapters()
+            .into_iter()
+            .find(|a| a.key == "deepseek_harness")
+            .expect("deepseek_harness adapter should exist");
+
+        std::env::set_var("DSH_HOME", "D:\\dsh-test-home");
+        assert_eq!(
+            adapter.skills_dir(),
+            PathBuf::from("D:\\dsh-test-home").join("skills")
+        );
+
+        std::env::remove_var("DSH_HOME");
+        assert_eq!(
+            adapter.skills_dir(),
+            ToolAdapter::home().join(".dsh").join("skills")
+        );
+    }
+
+    #[test]
+    fn dsh_shared_agents_root_stays_home_relative() {
+        let adapter = default_tool_adapters()
+            .into_iter()
+            .find(|a| a.key == "deepseek_harness")
+            .expect("deepseek_harness adapter should exist");
+        assert_eq!(
+            adapter.project_relative_skills_dir(),
+            ".dsh/skills",
+            "project roots keep the dotted .dsh layout"
+        );
     }
 
     /// Paths verified against the `AgentSkillsResolver` in the bundled Duo CLI
