@@ -1030,6 +1030,8 @@ pub fn run() {
             commands::skills::delete_tag,
             commands::skills::cancel_install,
             commands::skills::batch_import_folder,
+            commands::plugins::get_claude_plugin_skills,
+            commands::plugins::get_plugin_skill_document,
             // Sync
             commands::sync::sync_skill_to_tool,
             commands::sync::unsync_skill_from_tool,
