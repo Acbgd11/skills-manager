@@ -848,6 +848,8 @@ export interface PluginSkillEntry {
   name: string;
   description: string | null;
   relative_path: string;
+  zh_name?: string | null;
+  zh_description?: string | null;
 }
 
 export interface PluginSkillGroup {
@@ -860,6 +862,7 @@ export interface PluginSkillGroup {
   repository: string | null;
   author: string | null;
   description: string | null;
+  zh_description?: string | null;
   skills: PluginSkillEntry[];
 }
 
@@ -874,3 +877,44 @@ export const getClaudePluginSkills = () =>
 
 export const getPluginSkillDocument = (relativePath: string) =>
   invoke<ProjectSkillDocument>("get_plugin_skill_document", { relativePath });
+
+// ── Translation (bilingual UI) ──
+
+export interface TranslationSettings {
+  endpoint: string;
+  model: string;
+  format: "anthropic" | "openai";
+  has_key: boolean;
+}
+
+export interface TranslationStatus {
+  total: number;
+  pending: number;
+}
+
+export interface TranslateReport {
+  translated: number;
+  failed_batches: number;
+  pending: number;
+}
+
+export const getTranslationSettings = () =>
+  invoke<TranslationSettings>("get_translation_settings");
+
+export const setTranslationSettings = (
+  endpoint: string,
+  model: string,
+  format: "anthropic" | "openai",
+  apiKey?: string,
+) =>
+  invoke<void>("set_translation_settings", { endpoint, model, format, apiKey });
+
+export const testTranslationConnection = () =>
+  invoke<string>("test_translation_connection");
+
+export const getTranslationStatus = () =>
+  invoke<TranslationStatus>("get_translation_status");
+
+export const translateSkills = () => invoke<TranslateReport>("translate_skills");
+
+export const clearTranslations = () => invoke<void>("clear_translations");

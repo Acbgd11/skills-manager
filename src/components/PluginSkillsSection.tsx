@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  Languages,
   Loader2,
   Package,
   Search,
@@ -16,9 +20,14 @@ import { SkillMarkdown } from "./SkillMarkdown";
 import {
   getClaudePluginSkills,
   getPluginSkillDocument,
+  getTranslationSettings,
+  getTranslationStatus,
+  translateSkills,
   type PluginSkillEntry,
   type PluginSkillGroup,
   type PluginSkillsDto,
+  type TranslationSettings,
+  type TranslationStatus,
 } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
 
@@ -52,6 +61,13 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
     content: null,
     error: false,
   });
+  // Translation state (read-only: status + settings + in-flight progress).
+  const [trStatus, setTrStatus] = useState<TranslationStatus | null>(null);
+  const [trSettings, setTrSettings] = useState<TranslationSettings | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const navigate = useNavigate();
 
   const requestRef = useRef(0);
   const load = useCallback(async () => {
@@ -77,6 +93,41 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
       requestRef.current += 1;
     };
   }, [agentKey, load]);
+
+  // Fetch translation status + settings once for the plugin-skills block.
+  // The component owns its own refresh; the parent only mounts it.
+  useEffect(() => {
+    if (agentKey !== "claude_code") return;
+    getTranslationStatus()
+      .then(setTrStatus)
+      .catch(() => {});
+    getTranslationSettings()
+      .then(setTrSettings)
+      .catch(() => {});
+  }, [agentKey]);
+
+  // Listen for batch progress while a translation is in flight; unlisten on cleanup.
+  useEffect(() => {
+    if (agentKey !== "claude_code") return;
+    let unlisten: (() => void) | null = null;
+    let active = true;
+    listen<{ done: number; total: number }>("translation-progress", (event) => {
+      if (!active) return;
+      setProgress({ done: event.payload.done, total: event.payload.total });
+    })
+      .then((fn) => {
+        if (!active) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [agentKey]);
 
   // F4: filter by query across name, description, and plugin (group name).
   // When a query is active, matching entries auto-expand their containing group.
@@ -163,6 +214,88 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
   const toggleGroup = (key: string) =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  const handleTranslate = async () => {
+    if (translating) return;
+    setTranslating(true);
+    setProgress(null);
+    try {
+      const report = await translateSkills();
+      if (report.translated > 0) {
+        toast.success(
+          t("translation.resultSummary", {
+            ok: report.translated,
+            failed: report.failed_batches,
+          })
+        );
+      } else {
+        toast.info(t("translation.noPending"));
+      }
+      // Refresh the bilingual rows and the pending counter.
+      await Promise.all([
+        getTranslationStatus().then(setTrStatus).catch(() => {}),
+        load(),
+      ]);
+    } catch (e) {
+      toast.error(getErrorMessage(e, t("common.error")));
+    } finally {
+      setTranslating(false);
+      setProgress(null);
+    }
+  };
+
+  const renderTranslateButton = () => {
+    // ① Not configured → prompt the user to set up the endpoint.
+    if (trSettings && (trSettings.has_key === false || trSettings.model === "")) {
+      return (
+        <button
+          type="button"
+          onClick={() => navigate("/settings")}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-secondary px-2.5 py-1 text-[12px] text-secondary transition-colors hover:bg-surface-hover outline-none focus-visible:ring-2 focus-visible:ring-border"
+        >
+          <Languages className="h-3.5 w-3.5" />
+          {t("translation.goToSettings")}
+        </button>
+      );
+    }
+    // ② In flight → show progress driven by the `translation-progress` event.
+    if (translating) {
+      const done = progress?.done ?? 0;
+      const total = progress?.total ?? 0;
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-secondary px-2.5 py-1 text-[12px] text-muted">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          {t("translation.translating", { done, total })}
+        </span>
+      );
+    }
+    // ③ Pending → translate + badge.
+    if (trStatus && trStatus.pending > 0) {
+      return (
+        <button
+          type="button"
+          onClick={() => void handleTranslate()}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-secondary px-2.5 py-1 text-[12px] text-secondary transition-colors hover:bg-surface-hover outline-none focus-visible:ring-2 focus-visible:ring-border"
+        >
+          <Languages className="h-3.5 w-3.5" />
+          {t("translation.translate")}
+          <span className="rounded-full bg-accent-bg px-1.5 py-0.5 text-[11px] font-medium text-accent">
+            {t("translation.pendingBadge", { count: trStatus.pending })}
+          </span>
+        </button>
+      );
+    }
+    // ④ All translated → disabled confirmation.
+    if (trStatus && trStatus.total > 0 && trStatus.pending === 0) {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-secondary px-2.5 py-1 text-[12px] text-muted">
+          <Languages className="h-3.5 w-3.5" />
+          {t("translation.translatedAll")}
+        </span>
+      );
+    }
+    return null;
+  };
+
   const renderOfficialRow = (entry: PluginSkillEntry) => (
     <button
       key={`official:${entry.relative_path}`}
@@ -179,6 +312,14 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
           <span className="block truncate text-[12px] text-muted">
             {entry.description}
           </span>
+        ) : null}
+        {entry.zh_name ? (
+          <div className="mt-0.5 text-[12px] text-secondary">
+            {entry.zh_name}
+            {entry.zh_description ? (
+              <span className="text-muted"> — {entry.zh_description}</span>
+            ) : null}
+          </div>
         ) : null}
       </span>
     </button>
@@ -199,6 +340,14 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
           <span className="block truncate text-[12px] text-muted">
             {entry.description}
           </span>
+        ) : null}
+        {entry.zh_name ? (
+          <div className="mt-0.5 text-[12px] text-secondary">
+            {entry.zh_name}
+            {entry.zh_description ? (
+              <span className="text-muted"> — {entry.zh_description}</span>
+            ) : null}
+          </div>
         ) : null}
       </span>
     </button>
@@ -223,10 +372,13 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
 
   return (
     <section className="mt-4 flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-[14px] font-semibold text-primary">
-        <Package className="h-4 w-4 text-muted" />
-        {t("pluginSkills.title")}
-      </h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-[14px] font-semibold text-primary">
+          <Package className="h-4 w-4 text-muted" />
+          {t("pluginSkills.title")}
+        </h2>
+        {renderTranslateButton()}
+      </div>
 
       {!hasAnything && !normalizedQuery ? (
         <p className="px-1 text-[13px] text-muted">{t("pluginSkills.empty")}</p>
@@ -330,6 +482,11 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
                             {group.description ? (
                               <p className="mt-0.5 truncate text-[12px] text-muted">
                                 {group.description}
+                              </p>
+                            ) : null}
+                            {group.zh_description ? (
+                              <p className="mt-0.5 truncate text-[12px] text-secondary">
+                                {group.zh_description}
                               </p>
                             ) : null}
                             <p className="mt-0.5 text-[12px] text-faint">

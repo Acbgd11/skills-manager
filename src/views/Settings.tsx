@@ -164,6 +164,15 @@ export function Settings() {
   const [gitMergeEngineObject, setGitMergeEngineObject] = useState(true);
   const [proxyInput, setProxyInput] = useState("");
   const [proxySaving, setProxySaving] = useState(false);
+  // AI translation
+  const [trEndpoint, setTrEndpoint] = useState("");
+  const [trModel, setTrModel] = useState("");
+  const [trFormat, setTrFormat] = useState<"anthropic" | "openai">("anthropic");
+  const [trHasKey, setTrHasKey] = useState(false);
+  const [trApiKey, setTrApiKey] = useState("");
+  const [trSaving, setTrSaving] = useState(false);
+  const [trTesting, setTrTesting] = useState(false);
+  const [trClearing, setTrClearing] = useState(false);
   const [textSize, setTextSize] = useState("default");
   const [autoUpdateInterval, setAutoUpdateInterval] = useState("off");
   const [autoUpdateApply, setAutoUpdateApply] = useState("off");
@@ -340,6 +349,14 @@ export function Settings() {
     }).catch(() => {});
     api.getSettings("merge_engine").then((v) => {
       setGitMergeEngineObject((v ?? "").trim() !== "system");
+    }).catch(() => {});
+
+    // AI translation settings (key lives in the OS credential vault).
+    api.getTranslationSettings().then((s) => {
+      setTrEndpoint(s.endpoint);
+      setTrModel(s.model);
+      setTrFormat(s.format);
+      setTrHasKey(s.has_key);
     }).catch(() => {});
   }, []);
 
@@ -669,6 +686,79 @@ export function Settings() {
       toast.error(t("common.error"));
     } finally {
       setProxySaving(false);
+    }
+  };
+
+  const handleSaveTranslation = async () => {
+    const trimmedModel = trModel.trim();
+    if (!trimmedModel) {
+      toast.error(t("translation.emptyModel"));
+      return;
+    }
+    setTrSaving(true);
+    try {
+      const key = trApiKey.trim() || undefined;
+      await api.setTranslationSettings(
+        trEndpoint.trim(),
+        trimmedModel,
+        trFormat,
+        key,
+      );
+      // Refresh has_key so the placeholder reflects the new state.
+      const fresh = await api.getTranslationSettings();
+      setTrEndpoint(fresh.endpoint);
+      setTrModel(fresh.model);
+      setTrFormat(fresh.format);
+      setTrHasKey(fresh.has_key);
+      setTrApiKey("");
+      toast.success(t("translation.saved"));
+    } catch (e) {
+      toast.error(getErrorMessage(e, t("common.error")));
+    } finally {
+      setTrSaving(false);
+    }
+  };
+
+  const handleTestTranslation = async () => {
+    const trimmedModel = trModel.trim();
+    if (!trimmedModel) {
+      toast.error(t("translation.emptyModel"));
+      return;
+    }
+    setTrTesting(true);
+    try {
+      // Persist the current inputs first so the test runs against what the
+      // user sees, then probe the endpoint.
+      const key = trApiKey.trim() || undefined;
+      await api.setTranslationSettings(
+        trEndpoint.trim(),
+        trimmedModel,
+        trFormat,
+        key,
+      );
+      const fresh = await api.getTranslationSettings();
+      setTrHasKey(fresh.has_key);
+      const reply = await api.testTranslationConnection();
+      const snippet = reply.length > 80 ? `${reply.slice(0, 80)}…` : reply;
+      toast.success(t("translation.testSuccess", { reply: snippet }));
+    } catch (e) {
+      toast.error(getErrorMessage(e, t("translation.testFailed")));
+    } finally {
+      setTrTesting(false);
+    }
+  };
+
+  const handleClearTranslations = async () => {
+    const ok = await dialogConfirm(t("translation.clearCacheConfirm"));
+    if (!ok) return;
+    setTrClearing(true);
+    try {
+      await api.clearTranslations();
+      toast.success(t("translation.clearCacheDone"));
+    } catch (e) {
+      toast.error(getErrorMessage(e, t("common.error")));
+    } finally {
+      setTrClearing(false);
     }
   };
 
@@ -1627,6 +1717,114 @@ export function Settings() {
                     }
                   }}
                 />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* AI translation */}
+        <section>
+          <h2 className="app-section-title mb-3">
+            {t("translation.sectionTitle")}
+          </h2>
+          <div className="app-panel overflow-hidden divide-y divide-border-faint">
+            <div className="px-4 py-3 space-y-3">
+              <p className="text-[12px] text-muted">{t("translation.sectionHint")}</p>
+              <div>
+                <label className="text-[12px] text-muted mb-1 block">{t("translation.endpoint")}</label>
+                <input
+                  type="text"
+                  value={trEndpoint}
+                  onChange={(e) => setTrEndpoint(e.target.value)}
+                  placeholder="https://api.anthropic.com"
+                  className={`${fieldClass} w-full font-mono`}
+                />
+              </div>
+              <div>
+                <label className="text-[12px] text-muted mb-1 block">{t("translation.model")}</label>
+                <input
+                  type="text"
+                  value={trModel}
+                  onChange={(e) => setTrModel(e.target.value)}
+                  placeholder={t("translation.modelHint")}
+                  className={`${fieldClass} w-full font-mono`}
+                />
+              </div>
+              <div>
+                <label className="text-[12px] text-muted mb-1 block">{t("translation.format")}</label>
+                <div className="app-segmented flex-wrap bg-background">
+                  <button
+                    type="button"
+                    onClick={() => setTrFormat("anthropic")}
+                    className={cn(
+                      segmentedButtonClass,
+                      trFormat === "anthropic" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
+                    )}
+                  >
+                    {t("translation.formatAnthropic")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTrFormat("openai")}
+                    className={cn(
+                      segmentedButtonClass,
+                      trFormat === "openai" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
+                    )}
+                  >
+                    {t("translation.formatOpenAi")}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-[12px] text-muted mb-1 block">{t("translation.apiKey")}</label>
+                <input
+                  type="password"
+                  value={trApiKey}
+                  onChange={(e) => setTrApiKey(e.target.value)}
+                  placeholder={trHasKey ? t("translation.apiKeyConfigured") : ""}
+                  className={`${fieldClass} w-full font-mono`}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveTranslation()}
+                  disabled={trSaving}
+                  className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+                >
+                  {trSaving ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Check className="w-3 h-3" />
+                  )}
+                  {t("translation.save")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleTestTranslation()}
+                  disabled={trTesting}
+                  className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+                >
+                  {trTesting ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Globe className="w-3 h-3" />
+                  )}
+                  {t("translation.testConnection")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleClearTranslations()}
+                  disabled={trClearing}
+                  className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+                >
+                  {trClearing ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3 h-3" />
+                  )}
+                  {t("translation.clearCache")}
+                </button>
               </div>
             </div>
           </div>
