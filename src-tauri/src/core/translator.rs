@@ -74,6 +74,7 @@ pub fn build_request(cfg: &TranslationConfig, api_key: &str, prompt: &str) -> Ht
             ],
             body: serde_json::json!({
                 "model": cfg.model,
+                "max_tokens": 8000,
                 "messages": [{ "role": "user", "content": prompt }],
             }),
         },
@@ -216,6 +217,7 @@ mod tests {
         assert_eq!(spec.url, "http://127.0.0.1:8789/v1/chat/completions");
         assert!(spec.headers.iter().any(|(k, v)| k == "Authorization" && v == "Bearer sk-test"));
         assert_eq!(spec.body["model"], "test-model");
+        assert_eq!(spec.body["max_tokens"], 8000);
         assert_eq!(spec.body["messages"][0]["role"], "user");
     }
 
@@ -286,5 +288,37 @@ mod tests {
         let report = run_translation(batches, &cfg(ApiFormat::Anthropic), "k", &backend, &mut |_, _| {});
         assert!(report.translated.is_empty());
         assert_eq!(report.failed_batches, 1);
+    }
+
+    #[test]
+    fn extract_reply_text_reads_anthropic_content_blocks() {
+        let body = r#"{"content":[{"type":"text","text":"hello world"}]}"#;
+        assert_eq!(extract_reply_text(body), "hello world");
+    }
+
+    #[test]
+    fn extract_reply_text_reads_openai_choices_message() {
+        let body = r#"{"choices":[{"message":{"content":"hi there"}}]}"#;
+        assert_eq!(extract_reply_text(body), "hi there");
+    }
+
+    #[test]
+    fn extract_reply_text_falls_back_to_raw_body_on_unknown_shape() {
+        let body = "just plain text, no JSON";
+        assert_eq!(extract_reply_text(body), body);
+    }
+
+    #[test]
+    fn retry_recovers_when_second_attempt_succeeds() {
+        let batches = vec![vec![item(0), item(1)]];
+        let backend = FakeBackend {
+            replies: Mutex::new(vec![
+                Err(AppError::network("transient boom")), // attempt 1 fails
+                Ok(ok_reply(2)),                          // retry succeeds
+            ]),
+        };
+        let report = run_translation(batches, &cfg(ApiFormat::OpenAi), "k", &backend, &mut |_, _| {});
+        assert_eq!(report.translated.len(), 2);
+        assert_eq!(report.failed_batches, 0);
     }
 }

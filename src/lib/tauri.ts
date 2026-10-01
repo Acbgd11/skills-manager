@@ -862,6 +862,7 @@ export interface PluginSkillGroup {
   repository: string | null;
   author: string | null;
   description: string | null;
+  zh_name?: string | null;
   zh_description?: string | null;
   skills: PluginSkillEntry[];
 }
