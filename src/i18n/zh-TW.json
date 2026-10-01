@@ -748,7 +748,8 @@
     "create": "建立",
     "goToSettings": "設定",
     "expandAll": "展開全部",
-    "collapse": "收合"
+    "collapse": "收合",
+    "openFolder": "開啟所在資料夾"
   },
   "addFromLibrary": {
     "title": "從技能庫新增",

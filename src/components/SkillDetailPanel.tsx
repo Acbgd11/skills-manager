@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Folder,
+  FolderOpen,
   ChevronDown,
   ChevronUp,
   Github,
@@ -8,6 +9,7 @@ import {
   Globe,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { cn } from "../utils";
 import {
   getSkillDocument,
@@ -27,6 +29,8 @@ import { SkillMarkdown } from "./SkillMarkdown";
 import { AgentToggleSection, type AgentToggleItem } from "./AgentToggleSection";
 import { SkillProjectsSection } from "./SkillProjectsSection";
 import { SyncDots } from "./SyncDots";
+import { revealManagedSkillFolder } from "../lib/tauri";
+import { getErrorMessage } from "../lib/error";
 
 interface Props {
   skill: ManagedSkill | null;
@@ -247,6 +251,20 @@ function SkillDetailPanelContent({
         <span className="font-mono truncate" title={skill.central_path}>
           {skill.central_path}
         </span>
+        <button
+          type="button"
+          onClick={() => {
+            revealManagedSkillFolder(skill.id).catch((err: unknown) => {
+              toast.error(getErrorMessage(err, t("common.error")));
+            });
+          }}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
+          title={t("common.openFolder")}
+          aria-label={t("common.openFolder")}
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+          {t("common.openFolder")}
+        </button>
       </div>
       {metadataItems.length > 0 && (
         <div className="mt-4 rounded-xl border border-border-subtle bg-surface/70">

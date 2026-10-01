@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Download,
   FileText,
+  FolderOpen,
   Globe,
   LayoutGrid,
   List,
@@ -798,6 +799,18 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     [currentTool, loadLocalSkills, t]
   );
 
+  const handleRevealLocalSkillFolder = useCallback(
+    async (skill: ProjectSkill) => {
+      if (!currentTool) return;
+      try {
+        await api.revealSkillFolder(currentTool.key, skill.relative_path);
+      } catch (error: unknown) {
+        toast.error(getErrorMessage(error, t("common.error")));
+      }
+    },
+    [currentTool, t]
+  );
+
   const openLocalDetail = useCallback(
     async (skill: ProjectSkill) => {
       if (!currentTool) return;
@@ -870,10 +883,35 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       ? "rounded px-2 py-1 text-[13px] font-medium text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
       : "rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50";
 
-    if (isInSync && !isManaged) return null;
+    if (isInSync && !isManaged) {
+      // The only action available on this state, so it still gets its own row.
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void handleRevealLocalSkillFolder(skill);
+          }}
+          className={buttonClassName}
+          title={t("common.openFolder")}
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+        </button>
+      );
+    }
 
     return (
       <>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void handleRevealLocalSkillFolder(skill);
+          }}
+          className={buttonClassName}
+          title={t("common.openFolder")}
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+        </button>
+
         {!isInSync && canPull && (
           <button
             onClick={(e) => {
@@ -1348,6 +1386,15 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                 <span className="rounded-full bg-surface-hover px-2.5 py-1 text-[12px] text-muted">
                   {localDetailSkill.relative_path}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => localDetailSkill && void handleRevealLocalSkillFolder(localDetailSkill)}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
+                  title={t("common.openFolder")}
+                >
+                  <FolderOpen className="h-3 w-3" />
+                  {t("common.openFolder")}
+                </button>
               </div>
               {localDetailSkill.zh_name ? (
                 <p className="text-[13px] text-secondary">

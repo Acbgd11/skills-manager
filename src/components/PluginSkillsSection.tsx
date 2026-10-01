@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  FolderOpen,
   Loader2,
   Package,
   Search,
@@ -17,6 +19,7 @@ import { TranslateButton } from "./TranslateButton";
 import {
   getClaudePluginSkills,
   getPluginSkillDocument,
+  revealPluginSkillFolder,
   type PluginSkillEntry,
   type PluginSkillGroup,
   type PluginSkillsDto,
@@ -166,12 +169,37 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
   const toggleGroup = (key: string) =>
     setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
-  const renderOfficialRow = (entry: PluginSkillEntry) => (
+  // Rows are divs (not nested buttons) so the reveal action can live inside.
+  const revealFolderButton = (entry: PluginSkillEntry) => (
     <button
-      key={`official:${entry.relative_path}`}
       type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        revealPluginSkillFolder(entry.relative_path).catch((err: unknown) => {
+          toast.error(getErrorMessage(err, t("common.error")));
+        });
+      }}
+      className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
+      title={t("common.openFolder")}
+      aria-label={t("common.openFolder")}
+    >
+      <FolderOpen className="h-3.5 w-3.5" />
+    </button>
+  );
+
+  const renderOfficialRow = (entry: PluginSkillEntry) => (
+    <div
+      key={`official:${entry.relative_path}`}
+      role="button"
+      tabIndex={0}
       onClick={() => openDoc(entry)}
-      className="flex w-full items-start gap-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-hover outline-none focus-visible:ring-2 focus-visible:ring-border"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openDoc(entry);
+        }
+      }}
+      className="flex w-full cursor-pointer items-start gap-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-hover outline-none focus-visible:ring-2 focus-visible:ring-border"
     >
       <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
       <span className="min-w-0 flex-1">
@@ -192,15 +220,23 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
           </div>
         ) : null}
       </span>
-    </button>
+      {revealFolderButton(entry)}
+    </div>
   );
 
   const renderPluginRow = (entry: PluginSkillEntry) => (
-    <button
+    <div
       key={`plugin:${entry.relative_path}`}
-      type="button"
+      role="button"
+      tabIndex={0}
       onClick={() => openDoc(entry)}
-      className="flex w-full items-start gap-2 rounded-md px-3 py-2 pl-9 text-left transition-colors hover:bg-surface-hover outline-none focus-visible:ring-2 focus-visible:ring-border"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openDoc(entry);
+        }
+      }}
+      className="flex w-full cursor-pointer items-start gap-2 rounded-md px-3 py-2 pl-9 text-left transition-colors hover:bg-surface-hover outline-none focus-visible:ring-2 focus-visible:ring-border"
     >
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-secondary">
@@ -220,7 +256,8 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
           </div>
         ) : null}
       </span>
-    </button>
+      {revealFolderButton(entry)}
+    </div>
   );
 
   const metaLine = (group: PluginSkillGroup) => {

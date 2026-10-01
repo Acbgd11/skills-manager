@@ -473,6 +473,19 @@ export const hideToTray = () => invoke<void>("hide_to_tray");
 export const openCentralRepoFolder = () =>
   invoke<void>("open_central_repo_folder");
 
+// ── Open a skill's folder in the file manager (read-only) ──
+// The backend resolves and containment-checks every path; the frontend only
+// ever sends identifiers.
+
+export const revealSkillFolder = (agent: string, relativePath: string) =>
+  invoke<void>("reveal_skill_folder", { agent, relativePath });
+
+export const revealPluginSkillFolder = (relativePath: string) =>
+  invoke<void>("reveal_plugin_skill_folder", { relativePath });
+
+export const revealManagedSkillFolder = (skillId: string) =>
+  invoke<void>("reveal_managed_skill_folder", { skillId });
+
 export interface AppUpdateInfo {
   has_update: boolean;
   current_version: string;

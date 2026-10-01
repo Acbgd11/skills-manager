@@ -815,7 +815,8 @@
     "search": "Search",
     "goToSettings": "Settings",
     "expandAll": "Show all",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "openFolder": "Open containing folder"
   },
   "addFromLibrary": {
     "title": "Add from Library",

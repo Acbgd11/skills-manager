@@ -1035,6 +1035,9 @@ pub fn run() {
             commands::skills::batch_import_folder,
             commands::plugins::get_claude_plugin_skills,
             commands::plugins::get_plugin_skill_document,
+            commands::skills_location::reveal_skill_folder,
+            commands::skills_location::reveal_plugin_skill_folder,
+            commands::skills_location::reveal_managed_skill_folder,
             // Translation
             commands::translation::get_translation_settings,
             commands::translation::set_translation_settings,

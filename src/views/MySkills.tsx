@@ -21,6 +21,7 @@ import {
   GripVertical,
   CircleSlash,
   Circle,
+  FolderOpen,
   Pencil,
   Share2,
   Tag,
@@ -794,6 +795,14 @@ export function MySkills() {
     }
   };
 
+  const handleRevealSkillFolder = async (skill: ManagedSkill) => {
+    try {
+      await api.revealManagedSkillFolder(skill.id);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, t("common.error")));
+    }
+  };
+
   const handleRefreshSkill = async (skill: ManagedSkill, approvedRemovals?: string) => {
     setUpdatingSkillId(skill.id);
     try {
@@ -1494,6 +1503,12 @@ export function MySkills() {
                                 }]
                               : []),
                             {
+                              key: "openFolder",
+                              label: t("common.openFolder"),
+                              icon: <FolderOpen className="h-3.5 w-3.5" />,
+                              onSelect: () => handleRevealSkillFolder(skill),
+                            },
+                            {
                               key: "delete",
                               label: t("common.delete"),
                               icon: <Trash2 className="h-3.5 w-3.5" />,
@@ -1833,6 +1848,12 @@ export function MySkills() {
                               onSelect: () => handleRefreshSkill(skill),
                             }]
                           : []),
+                        {
+                          key: "openFolder",
+                          label: t("common.openFolder"),
+                          icon: <FolderOpen className="h-3.5 w-3.5" />,
+                          onSelect: () => handleRevealSkillFolder(skill),
+                        },
                         {
                           key: "delete",
                           label: t("common.delete"),

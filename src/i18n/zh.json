@@ -815,7 +815,8 @@
     "search": "搜索",
     "goToSettings": "设置",
     "expandAll": "展开全部",
-    "collapse": "收起"
+    "collapse": "收起",
+    "openFolder": "打开所在文件夹"
   },
   "addFromLibrary": {
     "title": "从技能库添加",

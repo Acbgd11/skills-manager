@@ -8,6 +8,7 @@ pub mod scan;
 pub mod presets;
 pub mod settings;
 pub mod skills;
+pub mod skills_location;
 pub mod sync;
 pub mod tools;
 pub mod translation;
