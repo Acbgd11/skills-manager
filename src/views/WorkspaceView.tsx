@@ -825,6 +825,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       setLocalCenterDocContent(null);
       setLocalZhDocContent(null);
       setLocalZhDocError(false);
+      setLocalZhDocLoading(false);
       setLocalDocLoading(true);
       setLocalCenterDocLoading(!!skill.center_skill_id);
 
@@ -880,10 +881,12 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       } else {
         setLocalZhDocError(true);
       }
+      setLocalZhDocLoading(false);
     } catch {
-      if (localDetailRequestRef.current === requestId) setLocalZhDocError(true);
-    } finally {
-      if (localDetailRequestRef.current === requestId) setLocalZhDocLoading(false);
+      if (localDetailRequestRef.current === requestId) {
+        setLocalZhDocError(true);
+        setLocalZhDocLoading(false);
+      }
     }
   }, [localDetailSkill, localDocContent, localZhDocLoading]);
 
