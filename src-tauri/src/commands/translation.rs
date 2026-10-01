@@ -44,10 +44,21 @@ fn keyring_entry() -> Result<keyring::Entry, AppError> {
         .map_err(|e| AppError::internal(e.to_string()))
 }
 
-fn load_api_key() -> Option<String> {
-    match keyring_entry().ok()?.get_password() {
-        Ok(v) if !v.trim().is_empty() => Some(v),
-        _ => None,
+/// Load the API key from the OS keychain.
+///
+/// `NoEntry` (no stored key) → `Ok(None)`: a legitimate "not configured yet"
+/// state, surfaced to the user as a missing-key hint. Any other keychain
+/// failure (service unavailable, access denied, corrupted entry) → `Err`:
+/// a real infrastructure problem that must NOT be masked as "未配置", which
+/// would mislead the user into re-entering a key that won't fix anything.
+/// The error message carries the underlying cause but never the key itself.
+fn load_api_key() -> Result<Option<String>, AppError> {
+    let entry = keyring_entry()?;
+    match entry.get_password() {
+        Ok(v) if !v.trim().is_empty() => Ok(Some(v)),
+        Ok(_) => Ok(None),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(AppError::internal(format!("读取翻译密钥失败：{e}"))),
     }
 }
 
@@ -173,7 +184,7 @@ pub async fn get_translation_settings(
             ApiFormat::Anthropic => "anthropic".into(),
             ApiFormat::OpenAi => "openai".into(),
         },
-        has_key: load_api_key().is_some(),
+        has_key: load_api_key()?.is_some(),
     })
 }
 
@@ -210,7 +221,8 @@ pub async fn test_translation_connection(
 ) -> Result<String, AppError> {
     let cfg = read_config(store.inner());
     validate_config(&cfg)?;
-    let key = load_api_key().ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
+    let key = load_api_key()?
+        .ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
     let spec = translator::build_request(&cfg, &key, "请回复：连接成功");
     let body = HttpBackend.complete(&spec)?;
     Ok(translator::extract_reply_text(&body))
@@ -240,7 +252,8 @@ pub async fn translate_skills(
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = read_config(&store);
         validate_config(&cfg)?;
-        let key = load_api_key().ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
+        let key = load_api_key()?
+            .ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
 
         let (items, all_batches) = collect_inputs(&plugin_scanner::claude_config_dir());
         let cached = store.get_translations().unwrap_or_default();
