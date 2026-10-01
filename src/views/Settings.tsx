@@ -18,6 +18,7 @@ import {
   BookOpen,
   Bug,
   FileArchive,
+  Sparkles,
   Type,
   Pencil,
   RotateCcw,
@@ -137,7 +138,7 @@ function AgentGroupDnd({ items, sensors, dragLabel, onDragEnd, renderAgentCard }
 export function Settings() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
-  const { tools, refreshTools, openHelp } = useApp();
+  const { tools, refreshTools, openHelp, openOnboarding } = useApp();
   const [togglingTools, setTogglingTools] = useState<Set<string>>(new Set());
   const { theme, setTheme } = useThemeContext();
   const [syncMode, setSyncMode] = useState("symlink");
@@ -1885,6 +1886,13 @@ export function Settings() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => openOnboarding(false)}
+                className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+              >
+                <Sparkles className="w-3 h-3" /> {t("settings.onboardingGuide")}
+              </button>
               <button
                 type="button"
                 onClick={openHelp}

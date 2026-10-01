@@ -233,6 +233,59 @@
     "restoreSuccess": "備份已還原，技能已就緒。",
     "hint": "之後隨時可以在側邊欄的「備份」頁連線或還原備份。"
   },
+  "onboarding": {
+    "title": "歡迎使用 Skills Manager",
+    "subtitle": "三個 AI 編程助手的技能管家。第一次用？花一分鐘看看下面的三個詞就夠了。",
+    "whatTitle": "這個軟體是幹什麼的",
+    "whatIntro": "一句話：它是 Claude Code、Codex、DeepSeek Harness 三個 AI 編程助手的「技能管家」，幫你把技能裝到每個助手那裡。它做三件事：",
+    "what": {
+      "inventory": {
+        "label": "看",
+        "description": "一眼看清誰有什麼技能、哪些技能在多個助手裡都裝了。"
+      },
+      "sync": {
+        "label": "同步",
+        "description": "一個技能想給幾個助手都用？點一下，就能同時裝到多個助手的目錄裡。"
+      },
+      "translate": {
+        "label": "翻譯",
+        "description": "英文技能說明書看不懂？一鍵翻成中文，翻譯結果會記下來，翻一次永久有效。"
+      }
+    },
+    "termsTitle": "三個詞：技能、外掛、市場",
+    "terms": {
+      "skill": {
+        "term": "技能 = 一本說明書",
+        "description": "就是「一個資料夾 + 一份說明」，教會 AI 一件小事。例：會做簡報、會把 PDF 裡的表格整理出來。"
+      },
+      "plugin": {
+        "term": "外掛 = 一個箱子",
+        "description": "箱子裡能裝好幾本說明書，一次安裝等於裝一批。例：一個叫 superpowers 的箱子，裡面裝了約 20 本說明書。"
+      },
+      "marketplace": {
+        "term": "市場 = 貨架目錄",
+        "description": "它告訴你「去哪裡拿」，本身不是東西。注意：官方貨架上既有官方做的箱子，也有別人做的——superpowers 就是一位個人作者寫的，只是擺在官方貨架上。"
+      }
+    },
+    "termsNote": "技能和外掛是真正裝到你電腦裡的東西；市場只是一個「目錄」，用來查找和下載。",
+    "agentsTitle": "三個助手脾氣不同",
+    "agents": {
+      "claudeCode": {
+        "name": "Claude Code",
+        "description": "有「市場 + 箱子」這套機制。技能有兩個來路：跟箱子一起裝進來的（外掛技能）、貨架上單賣的（官方技能）。"
+      },
+      "codex": {
+        "name": "Codex",
+        "description": "沒有這套機制。只認「你放進它目錄裡的說明書」，放什麼它就讀什麼。"
+      },
+      "deepseekHarness": {
+        "name": "DeepSeek Harness",
+        "description": "它也有「外掛」，但那些是給軟體本身加功能的零件（例如它自己的外掛市場按鈕），不裝說明書。所以它的技能永遠只有你自己放進去的。"
+      }
+    },
+    "dontShowAgain": "下次不再顯示",
+    "gotIt": "知道了"
+  },
   "mySkills": {
     "title": "技能庫",
     "applyToDefault": "套用 Preset",
@@ -604,6 +657,7 @@
     "textSizeXLarge": "特大",
     "language": "語言",
     "help": "說明",
+    "onboardingGuide": "新手說明",
     "website": "官網",
     "about": "關於",
     "version": "Skills Manager 1.40.2",

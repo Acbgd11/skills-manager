@@ -233,6 +233,59 @@
     "restoreSuccess": "Backup restored — your skills are ready.",
     "hint": "You can connect or restore a backup at any time from the Backup page in the sidebar."
   },
+  "onboarding": {
+    "title": "Welcome to Skills Manager",
+    "subtitle": "A skill butler for three AI coding assistants. First time here? The three words below are all you need.",
+    "whatTitle": "What does this app do?",
+    "whatIntro": "In one sentence: it is a skill butler for Claude Code, Codex, and DeepSeek Harness that keeps their skills in order. It does three things:",
+    "what": {
+      "inventory": {
+        "label": "See",
+        "description": "See at a glance who has which skills, and which ones are installed in several assistants at once."
+      },
+      "sync": {
+        "label": "Sync",
+        "description": "Want one skill for several assistants? One click installs it into all of their directories."
+      },
+      "translate": {
+        "label": "Translate",
+        "description": "Can't read an English skill manual? Translate it to your language once — the result is remembered forever."
+      }
+    },
+    "termsTitle": "Three words: skill, plugin, marketplace",
+    "terms": {
+      "skill": {
+        "term": "Skill = a manual",
+        "description": "A folder plus a document that teaches the AI one small ability. Example: making slide decks, or pulling tables out of PDFs."
+      },
+      "plugin": {
+        "term": "Plugin = a crate",
+        "description": "A crate carries several manuals at once, so one install brings a whole batch. Example: a crate named superpowers holds about 20 manuals."
+      },
+      "marketplace": {
+        "term": "Marketplace = a catalog shelf",
+        "description": "It only tells you where to get things — it is not a thing itself. Note: the official shelf carries both official crates and crates by others — superpowers was written by an individual author and simply sits on the official shelf."
+      }
+    },
+    "termsNote": "Skills and plugins are what actually gets installed on your machine; a marketplace is just a catalog for finding and downloading them.",
+    "agentsTitle": "The three assistants behave differently",
+    "agents": {
+      "claudeCode": {
+        "name": "Claude Code",
+        "description": "Has the marketplace + crate mechanism, so its skills come from two places: bundled with plugins (plugin skills), or sold individually on the shelf (official skills)."
+      },
+      "codex": {
+        "name": "Codex",
+        "description": "Has no such mechanism. It only reads the manuals you put into its directory — whatever you place there is what it sees."
+      },
+      "deepseekHarness": {
+        "name": "DeepSeek Harness",
+        "description": "It does have \"plugins\", but those are parts that add features to the software itself (like its own plugin-market button) — they carry no manuals. So its skills are always only the ones you place there yourself."
+      }
+    },
+    "dontShowAgain": "Don't show again",
+    "gotIt": "Got it"
+  },
   "mySkills": {
     "title": "Library",
     "applyToDefault": "Apply Preset",
@@ -647,6 +700,7 @@
     "textSizeXLarge": "Extra Large",
     "language": "Language",
     "help": "Help",
+    "onboardingGuide": "Beginner's Guide",
     "website": "Website",
     "about": "About",
     "version": "Skills Manager 1.40.2",

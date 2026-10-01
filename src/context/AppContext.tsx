@@ -34,6 +34,13 @@ interface AppState {
   clearAppError: () => void;
   openHelp: () => void;
   closeHelp: () => void;
+  /** Beginner's guide (onboarding): open state + whether the "don't show
+   *  again" checkbox is offered. Only the first-run auto-open sets
+   *  showCheckbox to true; re-opens from Settings hide it. */
+  onboardingOpen: boolean;
+  onboardingShowCheckbox: boolean;
+  openOnboarding: (showCheckbox: boolean) => void;
+  closeOnboarding: () => void;
   openSkillDetailById: (skillId: string) => void;
   closeSkillDetail: () => void;
 }
@@ -60,6 +67,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [appError, setAppError] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  // Whether the current onboarding session offers the "don't show again"
+  // checkbox: true only for the first-run auto-open, false for Settings.
+  const [onboardingShowCheckbox, setOnboardingShowCheckbox] = useState(false);
   const [detailSkillId, setDetailSkillId] = useState<string | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
   const autoCheckInFlightRef = useRef(false);
@@ -417,6 +428,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         clearAppError: () => setAppError(null),
         openHelp: () => setHelpOpen(true),
         closeHelp: () => setHelpOpen(false),
+        onboardingOpen,
+        onboardingShowCheckbox,
+        openOnboarding: (showCheckbox: boolean) => {
+          setOnboardingShowCheckbox(showCheckbox);
+          setOnboardingOpen(true);
+        },
+        closeOnboarding: () => setOnboardingOpen(false),
         openSkillDetailById: (skillId: string) => setDetailSkillId(skillId),
         closeSkillDetail: () => setDetailSkillId(null),
       }}
