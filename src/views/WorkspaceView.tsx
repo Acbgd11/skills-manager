@@ -866,6 +866,16 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     [currentTool]
   );
 
+  // A skill synced as a link points straight at the center copy, so the two
+  // documents are literally the same file and a diff can only ever be empty.
+  // Detect that so the diff tab can explain it instead of showing nothing.
+  const localIsLinked = useMemo(() => {
+    if (!localDetailSkill?.center_skill_id || !currentToolKey) return false;
+    const managed = managedSkills.find((s) => s.id === localDetailSkill.center_skill_id);
+    const target = managed?.targets.find((tg) => tg.tool === currentToolKey);
+    return target?.mode === "symlink";
+  }, [localDetailSkill, currentToolKey, managedSkills]);
+
   // Translate the detail view's body on demand. The backend caches by content
   // hash, so re-opening the same skill costs nothing after the first run.
   const handleTranslateLocalDoc = useCallback(async () => {
@@ -1495,7 +1505,13 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
         ) : localContentTab === "diff" ? (
           localDocContent && localCenterDocContent ? (
-            <DocumentDiffViewer original={localDocContent} updated={localCenterDocContent} />
+            localIsLinked ? (
+              <div className="rounded-md border border-border-subtle bg-bg-secondary p-3 text-[13px] text-muted">
+                {t("mySkills.localIsLinkedNote")}
+              </div>
+            ) : (
+              <DocumentDiffViewer original={localDocContent} updated={localCenterDocContent} />
+            )
           ) : localCenterDocLoading ? (
             <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
           ) : (
