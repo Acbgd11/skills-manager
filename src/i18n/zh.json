@@ -390,7 +390,9 @@
       "diff": "有何不同",
       "diffHint": "把本地文件与原件逐行对比，看两者差在哪",
       "source": "原件",
-      "sourceHint": "这个技能安装时的原始版本（来自中央库或它的来源仓库）"
+      "sourceHint": "这个技能安装时的原始版本（来自中央库或它的来源仓库）",
+      "zh": "中文",
+      "zhHint": "机器翻译的正文"
     },
     "sourceDiffUnavailable": "暂时无法读取来源版本内容",
     "sourceDiffEmpty": "本地文件与原件内容一致，没有不同。",
@@ -1212,6 +1214,11 @@
     "clearCacheDone": "已清空，可重新翻译",
     "clearCacheConfirm": "确定清空所有翻译缓存吗？",
     "testSuccess": "连接成功：{{reply}}",
-    "testFailed": "连接失败"
+    "testFailed": "连接失败",
+    "translatingBody": "正在翻译正文…",
+    "bodyNotTranslated": "这个技能的正文还没有翻译。",
+    "bodyFailed": "翻译失败。请到设置里检查翻译接口后重试。",
+    "bodyDisclaimer": "机器翻译的正文 —— 原文件未改动。",
+    "viewOriginal": "看原文"
   }
 }

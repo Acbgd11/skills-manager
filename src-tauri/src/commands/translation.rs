@@ -358,6 +358,70 @@ pub async fn clear_translations(
     store.inner().clear_translations().map_err(AppError::db)
 }
 
+/// Send one prompt to the configured endpoint and return the model's reply text.
+fn call_model(cfg: &TranslationConfig, prompt: &str) -> Result<String, AppError> {
+    let key = load_api_key()?.ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
+    let spec = translator::build_request(cfg, &key, prompt);
+    let body = HttpBackend.complete(&spec)?;
+    Ok(translator::extract_reply_text(&body))
+}
+
+/// Translate one skill's whole document body. `content` is the exact text the
+/// detail view is showing, so the caller and this command agree on the cache
+/// key. Returns `None` when the body is empty or the model returned nothing
+/// usable, so a failed translation never overwrites a good cached entry.
+///
+/// Read-only: the result lands in `skill_body_translations` and is never
+/// written back into the skill's own file.
+#[tauri::command]
+pub async fn translate_skill_body(
+    store: State<'_, Arc<SkillStore>>,
+    content: String,
+    source_path: String,
+) -> Result<Option<String>, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if content.trim().is_empty() {
+            return Ok(None);
+        }
+        let hash = translation_store::body_hash(&content);
+        if let Some(cached) = store.get_body_translation(&hash).map_err(AppError::db)? {
+            return Ok(Some(cached));
+        }
+        let cfg = read_config(&store);
+        validate_config(&cfg)?;
+        let prompt = translation_store::build_body_prompt(&content);
+        let reply = call_model(&cfg, &prompt)?;
+        let translated = translation_store::strip_code_fence(&reply);
+        if translated.trim().is_empty() {
+            return Ok(None);
+        }
+        let created_at = chrono::Utc::now().to_rfc3339();
+        store
+            .upsert_body_translation(&hash, &source_path, &translated, &cfg.model, &created_at)
+            .map_err(AppError::db)?;
+        Ok(Some(translated))
+    })
+    .await?
+}
+
+/// Whether a translated body is already cached for this exact content.
+#[tauri::command]
+pub async fn get_cached_body_translation(
+    store: State<'_, Arc<SkillStore>>,
+    content: String,
+) -> Result<Option<String>, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if content.trim().is_empty() {
+            return Ok(None);
+        }
+        let hash = translation_store::body_hash(&content);
+        store.get_body_translation(&hash).map_err(AppError::db)
+    })
+    .await?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

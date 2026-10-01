@@ -1446,6 +1446,42 @@ impl SkillStore {
     pub fn clear_translations(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM skill_translations", [])?;
+        conn.execute("DELETE FROM skill_body_translations", [])?;
+        Ok(())
+    }
+
+    /// Cached full-body translation for one content hash, if any.
+    pub fn get_body_translation(&self, content_hash: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT zh_body FROM skill_body_translations WHERE content_hash = ?1",
+        )?;
+        let mut rows = stmt.query([content_hash])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Insert-or-replace a translated body, keyed by the source content hash.
+    pub fn upsert_body_translation(
+        &self,
+        content_hash: &str,
+        source_path: &str,
+        zh_body: &str,
+        model: &str,
+        created_at: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO skill_body_translations
+                (content_hash, source_path, zh_body, model, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(content_hash) DO UPDATE SET
+                source_path=excluded.source_path, zh_body=excluded.zh_body,
+                model=excluded.model, created_at=excluded.created_at",
+            rusqlite::params![content_hash, source_path, zh_body, model, created_at],
+        )?;
         Ok(())
     }
 }

@@ -366,7 +366,10 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   const [localCenterDocContent, setLocalCenterDocContent] = useState<string | null>(null);
   const [localDocLoading, setLocalDocLoading] = useState(false);
   const [localCenterDocLoading, setLocalCenterDocLoading] = useState(false);
-  const [localContentTab, setLocalContentTab] = useState<"local" | "diff" | "center">("local");
+  const [localContentTab, setLocalContentTab] = useState<"local" | "diff" | "center" | "zh">("local");
+  const [localZhDocContent, setLocalZhDocContent] = useState<string | null>(null);
+  const [localZhDocLoading, setLocalZhDocLoading] = useState(false);
+  const [localZhDocError, setLocalZhDocError] = useState(false);
   const [uploadConfirmSkill, setUploadConfirmSkill] = useState<ProjectSkill | null>(null);
   const [pullConfirmSkill, setPullConfirmSkill] = useState<ProjectSkill | null>(null);
   const [deleteLocalConfirmSkill, setDeleteLocalConfirmSkill] = useState<ProjectSkill | null>(null);
@@ -820,13 +823,23 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       setLocalContentTab("local");
       setLocalDocContent(null);
       setLocalCenterDocContent(null);
+      setLocalZhDocContent(null);
+      setLocalZhDocError(false);
       setLocalDocLoading(true);
       setLocalCenterDocLoading(!!skill.center_skill_id);
 
       api
         .getGlobalLocalSkillDocument(currentTool.key, skill.relative_path)
         .then((doc) => {
-          if (localDetailRequestRef.current === requestId) setLocalDocContent(doc.content);
+          if (localDetailRequestRef.current !== requestId) return;
+          setLocalDocContent(doc.content);
+          // Show an already-cached translation without spending a model call.
+          api
+            .getCachedBodyTranslation(doc.content)
+            .then((zh) => {
+              if (localDetailRequestRef.current === requestId) setLocalZhDocContent(zh);
+            })
+            .catch(() => {});
         })
         .catch(() => {
           if (localDetailRequestRef.current === requestId) setLocalDocContent(null);
@@ -851,6 +864,28 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     },
     [currentTool]
   );
+
+  // Translate the detail view's body on demand. The backend caches by content
+  // hash, so re-opening the same skill costs nothing after the first run.
+  const handleTranslateLocalDoc = useCallback(async () => {
+    if (!localDetailSkill || !localDocContent || localZhDocLoading) return;
+    const requestId = localDetailRequestRef.current;
+    setLocalZhDocLoading(true);
+    setLocalZhDocError(false);
+    try {
+      const zh = await api.translateSkillBody(localDocContent, localDetailSkill.relative_path);
+      if (localDetailRequestRef.current !== requestId) return;
+      if (zh) {
+        setLocalZhDocContent(zh);
+      } else {
+        setLocalZhDocError(true);
+      }
+    } catch {
+      if (localDetailRequestRef.current === requestId) setLocalZhDocError(true);
+    } finally {
+      if (localDetailRequestRef.current === requestId) setLocalZhDocLoading(false);
+    }
+  }, [localDetailSkill, localDocContent, localZhDocLoading]);
 
   const existsInGlobal = useCallback(
     (skill: ManagedSkill, agentK: string) =>
@@ -1423,9 +1458,9 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         }
         onClose={() => setLocalDetailSkill(null)}
       >
-        {localDetailSkill?.center_skill_id && (
+        {localDetailSkill && (
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            {(["local", "diff", "center"] as const).map((tab) => (
+            {(["local", "diff", "center", "zh"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -1436,13 +1471,18 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                     ? "bg-accent text-white"
                     : "bg-surface-hover text-muted hover:text-secondary"
                 )}
-                disabled={(tab === "diff" || tab === "center") && localCenterDocLoading}
+                disabled={
+                  (tab === "diff" || tab === "center") &&
+                  (localCenterDocLoading || !localDetailSkill.center_skill_id)
+                }
               >
                 {tab === "local"
                   ? t("mySkills.docTabs.local")
                   : tab === "diff"
                     ? t("mySkills.docTabs.diff")
-                    : t("project.docTabs.center")}
+                    : tab === "center"
+                      ? t("project.docTabs.center")
+                      : t("mySkills.docTabs.zh")}
               </button>
             ))}
           </div>
@@ -1465,6 +1505,42 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
             <SkillMarkdown content={localCenterDocContent} />
           ) : (
             <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
+          )
+        ) : localContentTab === "zh" ? (
+          localZhDocLoading ? (
+            <div className="mt-12 text-center text-[13px] text-muted">
+              {t("translation.translatingBody")}
+            </div>
+          ) : localZhDocContent ? (
+            <div>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span className="text-[12px] text-muted">{t("translation.bodyDisclaimer")}</span>
+                {localDocContent && (
+                  <button
+                    type="button"
+                    onClick={() => setLocalContentTab("local")}
+                    className="rounded-md border border-border-subtle bg-bg-secondary px-2.5 py-1 text-[12px] text-secondary transition-colors hover:bg-surface-hover outline-none"
+                  >
+                    {t("translation.viewOriginal")}
+                  </button>
+                )}
+              </div>
+              <SkillMarkdown content={localZhDocContent} />
+            </div>
+          ) : (
+            <div className="mt-12 flex flex-col items-center gap-3 text-center">
+              <p className="text-[13px] text-muted">
+                {localZhDocError ? t("translation.bodyFailed") : t("translation.bodyNotTranslated")}
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleTranslateLocalDoc()}
+                disabled={!localDocContent}
+                className="rounded-md border border-border-subtle bg-bg-secondary px-3 py-1.5 text-[12px] text-secondary transition-colors hover:bg-surface-hover outline-none disabled:opacity-50"
+              >
+                {t("translation.translate")}
+              </button>
+            </div>
           )
         ) : localDocContent ? (
           <SkillMarkdown content={localDocContent} />

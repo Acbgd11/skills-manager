@@ -1044,6 +1044,8 @@ pub fn run() {
             commands::translation::test_translation_connection,
             commands::translation::get_translation_status,
             commands::translation::translate_skills,
+            commands::translation::translate_skill_body,
+            commands::translation::get_cached_body_translation,
             commands::translation::clear_translations,
             // Sync
             commands::sync::sync_skill_to_tool,

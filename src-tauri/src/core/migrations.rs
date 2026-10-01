@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version. Bump this when adding a new migration.
-const LATEST_VERSION: u32 = 9;
+const LATEST_VERSION: u32 = 10;
 
 /// Run all pending migrations on the database.
 ///
@@ -56,6 +56,7 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
         6 => migrate_v6_to_v7(conn),
         7 => migrate_v7_to_v8(conn),
         8 => migrate_v8_to_v9(conn),
+        9 => migrate_v9_to_v10(conn),
         _ => bail!("unknown migration version: {from_version}"),
     }
 }
@@ -334,6 +335,24 @@ fn migrate_v8_to_v9(conn: &Connection) -> Result<()> {
             zh_description TEXT NOT NULL,
             model          TEXT NOT NULL,
             created_at     TEXT NOT NULL
+        );",
+    )?;
+    Ok(())
+}
+
+/// v9 → v10: full-body translation cache for the skill detail view's 「中文」
+/// tab. Kept in its own table because the body is keyed by content hash rather
+/// than by the name/description fingerprint in `skill_translations` — the same
+/// skill can be edited without changing what it is called. Like that table,
+/// nothing here is ever written back into agent or plugin directories.
+fn migrate_v9_to_v10(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS skill_body_translations (
+            content_hash TEXT PRIMARY KEY,
+            source_path  TEXT NOT NULL,
+            zh_body      TEXT NOT NULL,
+            model        TEXT NOT NULL,
+            created_at   TEXT NOT NULL
         );",
     )?;
     Ok(())

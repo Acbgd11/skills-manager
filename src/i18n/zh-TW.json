@@ -387,7 +387,9 @@
       "diff": "有何不同",
       "diffHint": "把本機檔案與原件逐行對比，看兩者差在哪",
       "source": "原件",
-      "sourceHint": "這個技能安裝時的原始版本（來自中央庫或它的來源倉庫）"
+      "sourceHint": "這個技能安裝時的原始版本（來自中央庫或它的來源倉庫）",
+      "zh": "中文",
+      "zhHint": "機器翻譯的內文"
     },
     "sourceDiffUnavailable": "暫時無法讀取來源版本內容",
     "sourceDiffEmpty": "本機檔案與原件內容一致，沒有不同。",
@@ -1134,6 +1136,11 @@
     "clearCacheDone": "已清空，可重新翻譯",
     "clearCacheConfirm": "確定清空所有翻譯快取嗎？",
     "testSuccess": "連線成功：{{reply}}",
-    "testFailed": "連線失敗"
+    "testFailed": "連線失敗",
+    "translatingBody": "正在翻譯內文…",
+    "bodyNotTranslated": "這個技能的內文還沒有翻譯。",
+    "bodyFailed": "翻譯失敗。請到設定裡檢查翻譯介面後重試。",
+    "bodyDisclaimer": "機器翻譯的內文 —— 原檔案未改動。",
+    "viewOriginal": "看原文"
   }
 }

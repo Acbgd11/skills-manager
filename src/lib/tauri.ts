@@ -951,4 +951,12 @@ export const getTranslationStatus = () =>
 
 export const translateSkills = () => invoke<TranslateReport>("translate_skills");
 
+/** Translate one skill document body. Returns null when nothing usable came back. */
+export const translateSkillBody = (content: string, sourcePath: string) =>
+  invoke<string | null>("translate_skill_body", { content, sourcePath });
+
+/** Cached body translation for this exact content, or null if not yet translated. */
+export const getCachedBodyTranslation = (content: string) =>
+  invoke<string | null>("get_cached_body_translation", { content });
+
 export const clearTranslations = () => invoke<void>("clear_translations");

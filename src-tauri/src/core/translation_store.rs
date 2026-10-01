@@ -44,6 +44,63 @@ pub fn fingerprint(kind: &str, name: &str, description: Option<&str>) -> String 
     format!("{:x}", hasher.finalize())
 }
 
+/// Content hash of a whole document body. Body translations are keyed by this
+/// rather than by a name/description fingerprint, so editing a skill's text
+/// without renaming it still misses the cache and re-translates.
+pub fn body_hash(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Prompt for translating one whole skill document. Asks for the markdown back
+/// verbatim (headings, lists, code fences, links, frontmatter) with only the
+/// prose in Chinese, so the result renders identically to the original.
+pub fn build_body_prompt(content: &str) -> String {
+    format!(
+        "你是技术文档本地化助手。把下面这份 Markdown 技能文档翻译成简体中文。\n\
+规则：\n\
+1. 保留全部 Markdown 结构：标题层级、列表、表格、代码块、链接、图片、引用、分隔线原样不动。\n\
+2. 代码块内的代码、命令、路径、变量名、配置项一律不译，保持原样。\n\
+3. YAML frontmatter（--- 包裹的部分）只翻译可读的值（如 description），键名不动；\
+若其中 name/键名是英文标识符则保持原样。\n\
+4. 专业术语首次出现可用「中文（English）」形式。\n\
+5. 只输出翻译后的完整 Markdown 文档，不要任何解释、不要用代码块把整篇包起来。\n\n\
+原文：\n{content}"
+    )
+}
+
+/// Strips the wrapper a model sometimes adds around a whole document. Only
+/// unwraps when the *entire* reply is one fenced block — a document that itself
+/// contains fenced code keeps its own fences and is returned untouched.
+pub fn strip_code_fence(raw: &str) -> String {
+    let text = raw.trim();
+    if !text.starts_with("```") {
+        return text.to_string();
+    }
+    let Some(first_newline) = text.find('\n') else {
+        return text.to_string();
+    };
+    let rest = &text[first_newline + 1..];
+    let trimmed = rest.trim_end();
+    let Some(opener) = text[..first_newline].chars().nth(3) else {
+        return text.to_string();
+    };
+    // The opening fence must be closing with the same language tag (if any).
+    if !trimmed.ends_with("```") {
+        return text.to_string();
+    }
+    let inner = &trimmed[..trimmed.len() - 3];
+    // A `` ` `` right before the closing fence means the fence we saw was part
+    // of the document's own code, not a wrapper.
+    if inner.trim_end().ends_with('`') {
+        return text.to_string();
+    }
+    let _ = opener;
+    inner.trim().to_string()
+}
+
 pub fn plan_batches(inputs: Vec<TranslationInput>, batch_size: usize) -> Vec<Vec<TranslationInput>> {
     if batch_size == 0 {
         return Vec::new();
@@ -165,6 +222,42 @@ mod tests {
     }
 
     #[test]
+    fn body_translation_roundtrip_and_clear() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("skills.db")).unwrap();
+        let hash = body_hash("# Title\n\nBody.");
+
+        assert!(store.get_body_translation(&hash).unwrap().is_none());
+
+        store
+            .upsert_body_translation(&hash, "SKILL.md", "# 标题\n\n正文。", "m1", "2026-10-02T00:00:00Z")
+            .unwrap();
+        assert_eq!(
+            store.get_body_translation(&hash).unwrap().as_deref(),
+            Some("# 标题\n\n正文。")
+        );
+
+        // Upsert overwrites the same content hash in place.
+        store
+            .upsert_body_translation(&hash, "SKILL.md", "# 标题二", "m2", "2026-10-02T01:00:00Z")
+            .unwrap();
+        assert_eq!(
+            store.get_body_translation(&hash).unwrap().as_deref(),
+            Some("# 标题二")
+        );
+
+        // A different body is a different key and stays missing.
+        assert!(store
+            .get_body_translation(&body_hash("something else"))
+            .unwrap()
+            .is_none());
+
+        // Clearing the name/description cache clears bodies too.
+        store.clear_translations().unwrap();
+        assert!(store.get_body_translation(&hash).unwrap().is_none());
+    }
+
+    #[test]
     fn fingerprint_is_stable_and_content_sensitive() {
         let a = fingerprint("plugin_skill", "brainstorming", Some("Design first"));
         let b = fingerprint("plugin_skill", "brainstorming", Some("Design first"));
@@ -237,5 +330,38 @@ mod tests {
         let batch = vec![input(0)];
         assert!(parse_translation_response("完全不是 JSON", &batch).is_empty());
         assert!(parse_translation_response("", &batch).is_empty());
+    }
+
+    #[test]
+    fn body_hash_is_stable_and_content_sensitive() {
+        assert_eq!(body_hash("# Title\ntext"), body_hash("# Title\ntext"));
+        assert_ne!(body_hash("# Title\ntext"), body_hash("# Title\ntext!"));
+        assert_ne!(body_hash(""), body_hash("\n"));
+    }
+
+    #[test]
+    fn strip_code_fence_unwraps_a_whole_document_wrapper() {
+        let raw = "```markdown\n# 标题\n\n正文。\n```";
+        assert_eq!(strip_code_fence(raw), "# 标题\n\n正文。");
+    }
+
+    #[test]
+    fn strip_code_fence_keeps_documents_that_contain_code() {
+        // The reply is not a single wrapper: it carries its own fenced block.
+        let raw = "# 标题\n\n```bash\nls -la\n```\n";
+        assert_eq!(strip_code_fence(raw), raw.trim());
+    }
+
+    #[test]
+    fn strip_code_fence_leaves_unfenced_text_untouched() {
+        assert_eq!(strip_code_fence("  纯文本  "), "纯文本");
+        assert_eq!(strip_code_fence("```\nunclosed"), "```\nunclosed");
+    }
+
+    #[test]
+    fn body_prompt_carries_rules_and_original_text() {
+        let prompt = build_body_prompt("# Title\n\nBody text.");
+        assert!(prompt.contains("# Title\n\nBody text."));
+        assert!(prompt.contains("Markdown"));
     }
 }
