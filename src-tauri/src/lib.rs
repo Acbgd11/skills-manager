@@ -1032,6 +1032,13 @@ pub fn run() {
             commands::skills::batch_import_folder,
             commands::plugins::get_claude_plugin_skills,
             commands::plugins::get_plugin_skill_document,
+            // Translation
+            commands::translation::get_translation_settings,
+            commands::translation::set_translation_settings,
+            commands::translation::test_translation_connection,
+            commands::translation::get_translation_status,
+            commands::translation::translate_skills,
+            commands::translation::clear_translations,
             // Sync
             commands::sync::sync_skill_to_tool,
             commands::sync::unsync_skill_from_tool,

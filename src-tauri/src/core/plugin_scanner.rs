@@ -13,6 +13,10 @@ pub struct PluginSkillEntry {
     pub name: String,
     pub description: Option<String>,
     pub relative_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -27,6 +31,10 @@ pub struct PluginSkillGroup {
     pub author: Option<String>,
     pub description: Option<String>,
     pub skills: Vec<PluginSkillEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -254,6 +262,8 @@ fn collect_skills_recursive(
                     .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string()),
                 description: meta.description.clone(),
                 relative_path: relative,
+                zh_name: None,
+                zh_description: None,
             });
         } else if depth < SKILL_SCAN_MAX_DEPTH {
             // Not a skill directory — descend into it, carrying the deeper
@@ -336,6 +346,8 @@ pub fn scan_plugin_skills(config_dir: &Path) -> Vec<PluginSkillGroup> {
                 author,
                 description,
                 skills,
+                zh_name: None,
+                zh_description: None,
             });
         }
     }

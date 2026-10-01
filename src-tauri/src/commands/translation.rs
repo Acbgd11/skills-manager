@@ -1,0 +1,389 @@
+//! Translation command layer: settings, status, one-click translation,
+//! connection test. Keys live in the OS keychain; cached translations live
+//! in SQLite. Batch progress is pushed to the frontend via `translation-progress`.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
+
+use crate::core::error::AppError;
+use crate::core::plugin_scanner;
+use crate::core::skill_store::SkillStore;
+use crate::core::translation_store::{self, TranslationInput, TranslationRecord, BATCH_SIZE};
+use crate::core::translator::{self, ApiFormat, HttpBackend, TranslationBackend, TranslationConfig};
+
+const KEYRING_SERVICE: &str = "skills-manager-translation";
+const KEYRING_ACCOUNT: &str = "api-key";
+const DEFAULT_ENDPOINT: &str = "http://127.0.0.1:8789";
+
+#[derive(Debug, Serialize)]
+pub struct TranslationSettingsDto {
+    pub endpoint: String,
+    pub model: String,
+    pub format: String,
+    pub has_key: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TranslationStatusDto {
+    pub total: usize,
+    pub pending: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TranslateReportDto {
+    pub translated: usize,
+    pub failed_batches: usize,
+    pub pending: usize,
+}
+
+fn keyring_entry() -> Result<keyring::Entry, AppError> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        .map_err(|e| AppError::internal(e.to_string()))
+}
+
+fn load_api_key() -> Option<String> {
+    match keyring_entry().ok()?.get_password() {
+        Ok(v) if !v.trim().is_empty() => Some(v),
+        _ => None,
+    }
+}
+
+fn store_api_key(key: &str) -> Result<(), AppError> {
+    keyring_entry()?
+        .set_password(key)
+        .map_err(|e| AppError::internal(e.to_string()))
+}
+
+fn read_config(store: &SkillStore) -> TranslationConfig {
+    let endpoint = store
+        .get_setting("translation_endpoint")
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
+    let model = store
+        .get_setting("translation_model")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let format = match store
+        .get_setting("translation_format")
+        .ok()
+        .flatten()
+        .as_deref()
+    {
+        Some("openai") => ApiFormat::OpenAi,
+        _ => ApiFormat::Anthropic,
+    };
+    TranslationConfig {
+        endpoint,
+        model,
+        format,
+    }
+}
+
+fn validate_config(cfg: &TranslationConfig) -> Result<(), AppError> {
+    if cfg.endpoint.trim().is_empty() {
+        return Err(AppError::invalid_input("翻译接口地址未配置"));
+    }
+    if cfg.model.trim().is_empty() {
+        return Err(AppError::invalid_input("翻译模型未填写"));
+    }
+    Ok(())
+}
+
+/// Every translatable read-only item: plugin skills, official skills, plugin
+/// group descriptions. Returns the flat item list plus the pre-planned batches.
+fn collect_inputs(
+    config_dir: &std::path::Path,
+) -> (Vec<TranslationInput>, Vec<Vec<TranslationInput>>) {
+    let mut items = Vec::new();
+    for group in plugin_scanner::scan_plugin_skills(config_dir) {
+        if let Some(desc) = group.description.as_deref().filter(|d| !d.trim().is_empty()) {
+            let fp = translation_store::fingerprint("plugin_group", &group.plugin, Some(desc));
+            items.push(TranslationInput {
+                fingerprint: fp,
+                kind: "plugin_group".into(),
+                name: group.plugin.clone(),
+                description: Some(desc.to_string()),
+            });
+        }
+        for skill in group.skills {
+            let fp =
+                translation_store::fingerprint("plugin_skill", &skill.name, skill.description.as_deref());
+            items.push(TranslationInput {
+                fingerprint: fp,
+                kind: "plugin_skill".into(),
+                name: skill.name,
+                description: skill.description,
+            });
+        }
+    }
+    for skill in plugin_scanner::scan_official_skills(config_dir) {
+        let fp =
+            translation_store::fingerprint("official_skill", &skill.name, skill.description.as_deref());
+        items.push(TranslationInput {
+            fingerprint: fp,
+            kind: "official_skill".into(),
+            name: skill.name,
+            description: skill.description,
+        });
+    }
+    let batches = translation_store::plan_batches(items.clone(), BATCH_SIZE);
+    (items, batches)
+}
+
+/// Only the batches that still contain untranslated items (Review Focus #5:
+/// a second click with everything cached must produce zero batches → zero calls).
+fn pending_batches(
+    batches: Vec<Vec<TranslationInput>>,
+    cached: &HashMap<String, TranslationRecord>,
+) -> Vec<Vec<TranslationInput>> {
+    batches
+        .into_iter()
+        .map(|b| {
+            b.into_iter()
+                .filter(|i| !cached.contains_key(&i.fingerprint))
+                .collect::<Vec<_>>()
+        })
+        .filter(|b| !b.is_empty())
+        .collect()
+}
+
+pub fn count_pending(store: &SkillStore, items: &[TranslationInput]) -> usize {
+    let cached = store.get_translations().unwrap_or_default();
+    items
+        .iter()
+        .filter(|i| !cached.contains_key(&i.fingerprint))
+        .count()
+}
+
+#[tauri::command]
+pub async fn get_translation_settings(
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<TranslationSettingsDto, AppError> {
+    let cfg = read_config(store.inner());
+    Ok(TranslationSettingsDto {
+        endpoint: cfg.endpoint,
+        model: cfg.model,
+        format: match cfg.format {
+            ApiFormat::Anthropic => "anthropic".into(),
+            ApiFormat::OpenAi => "openai".into(),
+        },
+        has_key: load_api_key().is_some(),
+    })
+}
+
+#[tauri::command]
+pub async fn set_translation_settings(
+    store: State<'_, Arc<SkillStore>>,
+    endpoint: String,
+    model: String,
+    format: String,
+    api_key: Option<String>,
+) -> Result<(), AppError> {
+    let store = store.inner().clone();
+    store
+        .set_setting("translation_endpoint", endpoint.trim())
+        .map_err(AppError::db)?;
+    store
+        .set_setting("translation_model", model.trim())
+        .map_err(AppError::db)?;
+    store
+        .set_setting(
+            "translation_format",
+            if format == "openai" { "openai" } else { "anthropic" },
+        )
+        .map_err(AppError::db)?;
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        store_api_key(key.trim())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn test_translation_connection(
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<String, AppError> {
+    let cfg = read_config(store.inner());
+    validate_config(&cfg)?;
+    let key = load_api_key().ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
+    let spec = translator::build_request(&cfg, &key, "请回复：连接成功");
+    let body = HttpBackend.complete(&spec)?;
+    Ok(translator::extract_reply_text(&body))
+}
+
+#[tauri::command]
+pub async fn get_translation_status(
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<TranslationStatusDto, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (items, _) = collect_inputs(&plugin_scanner::claude_config_dir());
+        Ok(TranslationStatusDto {
+            total: items.len(),
+            pending: count_pending(&store, &items),
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn translate_skills(
+    app: AppHandle,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<TranslateReportDto, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = read_config(&store);
+        validate_config(&cfg)?;
+        let key = load_api_key().ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
+
+        let (items, all_batches) = collect_inputs(&plugin_scanner::claude_config_dir());
+        let cached = store.get_translations().unwrap_or_default();
+        let pending = pending_batches(all_batches, &cached);
+
+        let backend = HttpBackend;
+        let mut translated_total = 0usize;
+        let mut failed_batches = 0usize;
+        let model = cfg.model.clone();
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let total = pending.len();
+
+        for (index, batch) in pending.into_iter().enumerate() {
+            let done = index + 1;
+            let report = translator::run_translation(
+                vec![batch.clone()],
+                &cfg,
+                &key,
+                &backend,
+                &mut |_batch_done, _batch_total| {
+                    // run_translation reports per-single-batch counters (always
+                    // 1/1 here); re-emit with the outer pending-batch progress
+                    // so the frontend sees done = batches completed so far.
+                    let _ = app.emit(
+                        "translation-progress",
+                        serde_json::json!({ "done": done, "total": total }),
+                    );
+                },
+            );
+            failed_batches += report.failed_batches;
+            if !report.translated.is_empty() {
+                let records: Vec<TranslationRecord> = report
+                    .translated
+                    .iter()
+                    .map(|o| {
+                        let src = batch.iter().find(|i| i.fingerprint == o.fingerprint);
+                        TranslationRecord {
+                            fingerprint: o.fingerprint.clone(),
+                            kind: src.map(|s| s.kind.clone()).unwrap_or_default(),
+                            source_name: src.map(|s| s.name.clone()).unwrap_or_default(),
+                            zh_name: o.zh_name.clone(),
+                            zh_description: o.zh_description.clone(),
+                            model: model.clone(),
+                            created_at: created_at.clone(),
+                        }
+                    })
+                    .collect();
+                store.upsert_translations(&records).map_err(AppError::db)?;
+                translated_total += records.len();
+            }
+        }
+
+        let remaining = count_pending(&store, &items);
+        Ok(TranslateReportDto {
+            translated: translated_total,
+            failed_batches,
+            pending: remaining,
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn clear_translations(
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<(), AppError> {
+    store.inner().clear_translations().map_err(AppError::db)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::skill_store::SkillStore;
+    use crate::core::translation_store::fingerprint;
+
+    fn input_item(kind: &str, name: &str, description: Option<&str>) -> TranslationInput {
+        TranslationInput {
+            fingerprint: fingerprint(kind, name, description),
+            kind: kind.into(),
+            name: name.into(),
+            description: description.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn pending_counts_only_untranslated_items() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("skills.db")).unwrap();
+        let items = vec![
+            input_item("plugin_skill", "a", Some("A desc")),
+            input_item("plugin_skill", "b", Some("B desc")),
+        ];
+        assert_eq!(count_pending(&store, &items), 2);
+
+        let done = crate::core::translation_store::TranslationRecord {
+            fingerprint: items[0].fingerprint.clone(),
+            kind: items[0].kind.clone(),
+            source_name: items[0].name.clone(),
+            zh_name: "甲".into(),
+            zh_description: "一".into(),
+            model: "m".into(),
+            created_at: "2026-10-01T00:00:00Z".into(),
+        };
+        store.upsert_translations(&[done]).unwrap();
+        assert_eq!(count_pending(&store, &items), 1);
+    }
+
+    #[test]
+    fn refuses_without_model_or_endpoint() {
+        let cfg = crate::core::translator::TranslationConfig {
+            endpoint: "http://127.0.0.1:8789".into(),
+            model: "".into(),
+            format: crate::core::translator::ApiFormat::Anthropic,
+        };
+        assert!(validate_config(&cfg).is_err());
+    }
+
+    #[test]
+    fn second_click_with_everything_cached_produces_no_batches() {
+        // Review Focus #5: nothing pending → zero batches → zero API calls.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("skills.db")).unwrap();
+        let items = vec![
+            input_item("plugin_skill", "a", Some("A desc")),
+            input_item("official_skill", "docx", Some("Word")),
+        ];
+        let batches = crate::core::translation_store::plan_batches(items.clone(), BATCH_SIZE);
+
+        let records: Vec<_> = items
+            .iter()
+            .map(|i| crate::core::translation_store::TranslationRecord {
+                fingerprint: i.fingerprint.clone(),
+                kind: i.kind.clone(),
+                source_name: i.name.clone(),
+                zh_name: "甲".into(),
+                zh_description: "一".into(),
+                model: "m".into(),
+                created_at: "2026-10-01T00:00:00Z".into(),
+            })
+            .collect();
+        store.upsert_translations(&records).unwrap();
+
+        let cached = store.get_translations().unwrap();
+        assert!(pending_batches(batches, &cached).is_empty());
+    }
+}

@@ -2,11 +2,15 @@
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri::command;
+use tauri::State;
 
 use crate::commands::projects::{ensure_safe_skill_relative_path, ProjectSkillDocumentDto};
 use crate::core::error::AppError;
 use crate::core::plugin_scanner;
+use crate::core::skill_store::SkillStore;
+use crate::core::translation_store;
 
 #[derive(Debug, Serialize)]
 pub struct PluginSkillsDto {
@@ -37,11 +41,43 @@ fn resolve_skill_dir(config_dir: &Path, relative_path: &str) -> Result<PathBuf, 
 }
 
 #[command]
-pub async fn get_claude_plugin_skills() -> Result<PluginSkillsDto, AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
+pub async fn get_claude_plugin_skills(
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<PluginSkillsDto, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
         let config_dir = plugin_scanner::claude_config_dir();
-        let groups = plugin_scanner::scan_plugin_skills(&config_dir);
-        let official = plugin_scanner::scan_official_skills(&config_dir);
+        let mut groups = plugin_scanner::scan_plugin_skills(&config_dir);
+        let mut official = plugin_scanner::scan_official_skills(&config_dir);
+
+        // Fill zh_name/zh_description from the translation cache (by fingerprint).
+        let cached = store.get_translations().unwrap_or_default();
+        for group in &mut groups {
+            if let Some(d) = group.description.as_deref() {
+                let fp = translation_store::fingerprint("plugin_group", &group.plugin, Some(d));
+                if let Some(rec) = cached.get(&fp) {
+                    group.zh_name = Some(rec.zh_name.clone());
+                    group.zh_description = Some(rec.zh_description.clone());
+                }
+            }
+            for skill in &mut group.skills {
+                let fp =
+                    translation_store::fingerprint("plugin_skill", &skill.name, skill.description.as_deref());
+                if let Some(rec) = cached.get(&fp) {
+                    skill.zh_name = Some(rec.zh_name.clone());
+                    skill.zh_description = Some(rec.zh_description.clone());
+                }
+            }
+        }
+        for skill in &mut official {
+            let fp =
+                translation_store::fingerprint("official_skill", &skill.name, skill.description.as_deref());
+            if let Some(rec) = cached.get(&fp) {
+                skill.zh_name = Some(rec.zh_name.clone());
+                skill.zh_description = Some(rec.zh_description.clone());
+            }
+        }
+
         Ok(PluginSkillsDto {
             groups,
             official,
