@@ -821,7 +821,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Updater plugin removed — the fork build has no signing key and the
+        // Tauri config no longer carries an updater entry; registering the
+        // plugin with a null config panics on launch.  See commit 2ed0f61.
+        // .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             // Snapshot the builder->setup gap BEFORE doing any work in setup,
             // so the label reflects only the time Tauri spent constructing
