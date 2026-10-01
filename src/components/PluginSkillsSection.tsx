@@ -220,8 +220,15 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
     setProgress(null);
     try {
       const report = await translateSkills();
-      if (report.translated > 0) {
+      if (report.translated > 0 && report.failed_batches === 0) {
         toast.success(
+          t("translation.resultSummary", {
+            ok: report.translated,
+            failed: report.failed_batches,
+          })
+        );
+      } else if (report.failed_batches > 0) {
+        toast.error(
           t("translation.resultSummary", {
             ok: report.translated,
             failed: report.failed_batches,
