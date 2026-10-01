@@ -470,7 +470,11 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   // Cross-agent presence index: a single read scan across every installed
   // agent. Cheap enough to refresh alongside the local-skill load, and shared
   // by the skill cards and the detail sheet. Failures are silent — the row
-  // just won't render.
+  // just won't render. `localSkills` is a dependency because deleting,
+  // importing, uploading, or pulling a local skill changes what is on disk
+  // without necessarily touching installedTools/managedSkills; every such
+  // action funnels through loadLocalSkills, so its fresh array reference
+  // marks the moment the scan must re-run.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -482,7 +486,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [installedTools, managedSkills]);
+  }, [installedTools, managedSkills, localSkills]);
 
   // Load real on-disk skill counts for every installed agent while the overview
   // is shown (#287). Scoped to the overview (currentToolKey === null); the

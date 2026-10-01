@@ -36,7 +36,7 @@ fn adapter_for_agent(
         .ok_or_else(|| AppError::not_found(format!("Unknown agent: {}", agent)))
 }
 
-fn read_agent_local_skills(
+pub(crate) fn read_agent_local_skills(
     adapter: &tool_adapters::ToolAdapter,
 ) -> Vec<project_scanner::ProjectSkillInfo> {
     project_scanner::read_linked_workspace_skills(

@@ -153,17 +153,12 @@ fn collect_inputs(
             description: skill.description,
         });
     }
-    // Each installed+enabled agent's global local skills. Mirrors
-    // `agent_workspace::read_agent_local_skills` (same adapter source, same
-    // reader), so fingerprints line up with what the workspace cards render.
+    // Each installed+enabled agent's global local skills. Read through the
+    // shared `agent_workspace::read_agent_local_skills` helper — the exact
+    // code path the workspace cards render — so fingerprints line up with
+    // what the fill side computes, byte-for-byte.
     for adapter in tool_adapters::enabled_installed_adapters(store) {
-        for skill in crate::core::project_scanner::read_linked_workspace_skills(
-            &adapter.skills_dir(),
-            None,
-            &adapter.key,
-            &adapter.display_name,
-            adapter.recursive_scan,
-        ) {
+        for skill in crate::commands::agent_workspace::read_agent_local_skills(&adapter) {
             let Some(desc) = skill.description.as_deref().filter(|d| !d.trim().is_empty()) else {
                 continue;
             };
