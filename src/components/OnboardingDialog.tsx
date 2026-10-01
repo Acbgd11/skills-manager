@@ -38,7 +38,16 @@ export function OnboardingDialog() {
     if (gateRanRef.current) return;
     gateRanRef.current = true;
     void (async () => {
-      const dismissed = await api.getSettings(ONBOARDING_DISMISSED_KEY).catch(() => null);
+      let dismissed: string | null;
+      try {
+        dismissed = await api.getSettings(ONBOARDING_DISMISSED_KEY);
+      } catch (error) {
+        // Fail closed: a failed read is NOT the same as "not set". If we
+        // treated it as unset, a single transient error would auto-open the
+        // guide on every launch. Log instead of swallowing silently.
+        console.error("Failed to read onboarding dismissed flag:", error);
+        return;
+      }
       if (dismissed) return;
       openOnboarding(true);
     })();
@@ -60,7 +69,13 @@ export function OnboardingDialog() {
     closeOnboarding();
     // Persist after closing so the dialog never lingers on a slow write.
     if (dontShowAgain) {
-      await api.setSettings(ONBOARDING_DISMISSED_KEY, "true").catch(() => {});
+      try {
+        await api.setSettings(ONBOARDING_DISMISSED_KEY, "true");
+      } catch (error) {
+        // Do not pretend the dismissal was saved; surface it so the user can
+        // tell why the guide may reappear. The dialog still closes as before.
+        console.error("Failed to persist onboarding dismissed flag:", error);
+      }
     }
     setSaving(false);
   };
