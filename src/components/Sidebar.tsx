@@ -377,7 +377,7 @@ export function Sidebar() {
 
   return (
     <>
-      <div className="w-[220px] flex-shrink-0 bg-bg-secondary border-r border-border-subtle h-full flex flex-col select-none relative z-10">
+      <div className="w-[220px] flex-shrink-0 bg-bg-secondary border-r border-border-subtle h-full flex flex-col overflow-y-auto scrollbar-hide select-none relative z-10">
         {/* Traffic-light safe zone */}
         <div className="h-[38px] shrink-0" />
         {/* App logo — sits below macOS window controls */}
@@ -706,7 +706,7 @@ export function Sidebar() {
         </div>
 
         {/* Settings */}
-        <div className="p-2.5 border-t border-border-subtle shrink-0">
+        <div className="mt-auto p-2.5 border-t border-border-subtle shrink-0">
           <Link
             to="/settings"
             className={cn(
