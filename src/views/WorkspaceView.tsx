@@ -34,6 +34,7 @@ import { getErrorMessage } from "../lib/error";
 import { getTagActiveColor, getTagColor, pruneStaleTagFilters, UNTAGGED_FILTER } from "../lib/skillTags";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 import { PluginSkillsSection } from "../components/PluginSkillsSection";
+import { TranslateButton } from "../components/TranslateButton";
 import { useMultiSelect } from "../hooks/useMultiSelect";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import type { WorkspaceConfig } from "./workspaceConfigs";
@@ -61,6 +62,8 @@ function WorkspaceSkillCard({
   selectable = false,
   selected = false,
   presenceRow,
+  zhName,
+  zhDescription,
   onClick,
 }: {
   viewMode: "grid" | "list";
@@ -77,6 +80,10 @@ function WorkspaceSkillCard({
   selected?: boolean;
   /** Other agents that also have a skill with this name (read-only). */
   presenceRow?: ReactNode;
+  /** Cached Chinese name (from the translation cache; read-only). */
+  zhName?: string | null;
+  /** Cached Chinese description (from the translation cache; read-only). */
+  zhDescription?: string | null;
   onClick: () => void;
 }) {
   const leadingSlot = selectable
@@ -114,6 +121,12 @@ function WorkspaceSkillCard({
         <p className="min-w-0 flex-1 truncate text-[13px] text-muted">
           {description || "-"}
         </p>
+        {zhName ? (
+          <span className="hidden shrink-0 truncate text-[12px] text-secondary xl:inline">
+            {zhName}
+            {zhDescription ? <span className="text-muted"> — {zhDescription}</span> : null}
+          </span>
+        ) : null}
         {presenceRow}
         {tags.length > 0 && (
           <div className="flex shrink-0 items-center gap-1.5">
@@ -184,6 +197,12 @@ function WorkspaceSkillCard({
         <p className="truncate text-[13px] leading-[18px] text-muted">
           {description || "-"}
         </p>
+        {zhName ? (
+          <p className="mt-0.5 truncate text-[12px] leading-[16px] text-secondary">
+            {zhName}
+            {zhDescription ? <span className="text-muted"> — {zhDescription}</span> : null}
+          </p>
+        ) : null}
         {presenceRow}
         {tags.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1">
@@ -1097,6 +1116,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
               <Plus className="h-3.5 w-3.5" />
               {t("globalWorkspace.addSkill")}
             </button>
+            <TranslateButton onDone={loadLocalSkills} />
           </div>
         </div>
 
@@ -1285,6 +1305,8 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                 selectable={isMultiSelect}
                 selected={selectedIds.has(key)}
                 presenceRow={presenceRow}
+                zhName={skill.zh_name}
+                zhDescription={skill.zh_description}
                 onClick={() => isMultiSelect ? toggleSelect(key) : void openLocalDetail(skill)}
               />
             );
@@ -1323,6 +1345,14 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                   {localDetailSkill.relative_path}
                 </span>
               </div>
+              {localDetailSkill.zh_name ? (
+                <p className="text-[13px] text-secondary">
+                  {localDetailSkill.zh_name}
+                  {localDetailSkill.zh_description ? (
+                    <span className="text-muted"> — {localDetailSkill.zh_description}</span>
+                  ) : null}
+                </p>
+              ) : null}
               {(() => {
                 const entries = presenceByName.get(localDetailSkill.name.toLowerCase());
                 if (!entries || entries.length <= 1 || !currentToolKey) return null;

@@ -36,6 +36,13 @@ pub struct ProjectSkillInfo {
     pub sync_status: String,
     #[serde(default)]
     pub center_skill_id: Option<String>,
+    /// Cached Chinese translation of `name` (looked up by the workspace command
+    /// from the translation cache; `None` when no translation is stored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh_name: Option<String>,
+    /// Cached Chinese translation of `description`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh_description: Option<String>,
     #[serde(skip_serializing)]
     pub last_modified_at: Option<i64>,
     #[serde(skip_serializing)]
@@ -207,6 +214,8 @@ fn read_skills_from_dir_recursive(
                 in_center: false,
                 sync_status: "project_only".to_string(),
                 center_skill_id: None,
+                zh_name: None,
+                zh_description: None,
                 last_modified_at,
                 content_hash,
             });

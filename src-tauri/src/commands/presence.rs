@@ -138,6 +138,8 @@ mod tests {
             in_center: false,
             sync_status: "project_only".to_string(),
             center_skill_id: None,
+            zh_name: None,
+            zh_description: None,
             last_modified_at: None,
             content_hash: hash.map(|h| h.to_string()),
         }

@@ -175,6 +175,10 @@ export interface ProjectSkill {
   in_center: boolean;
   sync_status: "project_only" | "in_sync" | "project_newer" | "center_newer" | "diverged";
   center_skill_id: string | null;
+  /** Cached Chinese name (from the app's translation cache; read-only). */
+  zh_name?: string | null;
+  /** Cached Chinese description (from the app's translation cache; read-only). */
+  zh_description?: string | null;
 }
 
 export interface ProjectSkillDocument {

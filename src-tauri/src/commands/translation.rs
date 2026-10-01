@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::core::error::AppError;
 use crate::core::plugin_scanner;
 use crate::core::skill_store::SkillStore;
+use crate::core::tool_adapters;
 use crate::core::translation_store::{self, TranslationInput, TranslationRecord, BATCH_SIZE};
 use crate::core::translator::{self, ApiFormat, HttpBackend, TranslationBackend, TranslationConfig};
 
@@ -107,8 +108,17 @@ fn validate_config(cfg: &TranslationConfig) -> Result<(), AppError> {
 }
 
 /// Every translatable read-only item: plugin skills, official skills, plugin
-/// group descriptions. Returns the flat item list plus the pre-planned batches.
+/// group descriptions, plus each installed+enabled agent's global local skills.
+/// Returns the flat item list plus the pre-planned batches.
+///
+/// `local_skill` entries mirror what `get_global_local_skills` reads via
+/// `read_agent_local_skills` — same adapter enumeration, same recursive scan —
+/// so a fingerprint computed here matches one computed there byte-for-byte.
+/// Only skills carrying a non-empty description are included: the existing
+/// convention for plugin/official items, and translating a name-only card adds
+/// no value the user can read.
 fn collect_inputs(
+    store: &SkillStore,
     config_dir: &std::path::Path,
 ) -> (Vec<TranslationInput>, Vec<Vec<TranslationInput>>) {
     let mut items = Vec::new();
@@ -142,6 +152,29 @@ fn collect_inputs(
             name: skill.name,
             description: skill.description,
         });
+    }
+    // Each installed+enabled agent's global local skills. Mirrors
+    // `agent_workspace::read_agent_local_skills` (same adapter source, same
+    // reader), so fingerprints line up with what the workspace cards render.
+    for adapter in tool_adapters::enabled_installed_adapters(store) {
+        for skill in crate::core::project_scanner::read_linked_workspace_skills(
+            &adapter.skills_dir(),
+            None,
+            &adapter.key,
+            &adapter.display_name,
+            adapter.recursive_scan,
+        ) {
+            let Some(desc) = skill.description.as_deref().filter(|d| !d.trim().is_empty()) else {
+                continue;
+            };
+            let fp = translation_store::fingerprint("local_skill", &skill.name, Some(desc));
+            items.push(TranslationInput {
+                fingerprint: fp,
+                kind: "local_skill".into(),
+                name: skill.name,
+                description: Some(desc.to_string()),
+            });
+        }
     }
     let batches = translation_store::plan_batches(items.clone(), BATCH_SIZE);
     (items, batches)
@@ -234,7 +267,7 @@ pub async fn get_translation_status(
 ) -> Result<TranslationStatusDto, AppError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let (items, _) = collect_inputs(&plugin_scanner::claude_config_dir());
+        let (items, _) = collect_inputs(&store, &plugin_scanner::claude_config_dir());
         Ok(TranslationStatusDto {
             total: items.len(),
             pending: count_pending(&store, &items),
@@ -255,7 +288,7 @@ pub async fn translate_skills(
         let key = load_api_key()?
             .ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
 
-        let (items, all_batches) = collect_inputs(&plugin_scanner::claude_config_dir());
+        let (items, all_batches) = collect_inputs(&store, &plugin_scanner::claude_config_dir());
         let cached = store.get_translations().unwrap_or_default();
         let pending = pending_batches(all_batches, &cached);
 
@@ -361,6 +394,31 @@ mod tests {
             source_name: items[0].name.clone(),
             zh_name: "甲".into(),
             zh_description: "一".into(),
+            model: "m".into(),
+            created_at: "2026-10-01T00:00:00Z".into(),
+        };
+        store.upsert_translations(&[done]).unwrap();
+        assert_eq!(count_pending(&store, &items), 1);
+    }
+
+    #[test]
+    fn pending_counts_local_skill_items_one_cached_one_not() {
+        // Extension scope: local_skill entries flow through the same pending
+        // counter. One cached, one not → exactly one pending.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("skills.db")).unwrap();
+        let items = vec![
+            input_item("local_skill", "codex-skill", Some("Codex local skill")),
+            input_item("local_skill", "ds-skill", Some("DeepSeek local skill")),
+        ];
+        assert_eq!(count_pending(&store, &items), 2);
+
+        let done = crate::core::translation_store::TranslationRecord {
+            fingerprint: items[0].fingerprint.clone(),
+            kind: items[0].kind.clone(),
+            source_name: items[0].name.clone(),
+            zh_name: "代码技能".into(),
+            zh_description: "Codex 本地技能".into(),
             model: "m".into(),
             created_at: "2026-10-01T00:00:00Z".into(),
         };

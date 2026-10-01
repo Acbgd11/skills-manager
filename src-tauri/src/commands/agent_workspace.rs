@@ -150,12 +150,24 @@ pub async fn get_global_local_skills(
         let all_managed = store.get_all_skills().map_err(AppError::db)?;
         let all_targets = store.get_all_targets().map_err(AppError::db)?;
         let tags_map = store.get_tags_map().unwrap_or_default();
-        Ok(enrich_center_status(
-            skills,
-            &all_managed,
-            &all_targets,
-            &tags_map,
-        ))
+        let mut skills = enrich_center_status(skills, &all_managed, &all_targets, &tags_map);
+
+        // Fill zh_name/zh_description from the translation cache (by fingerprint).
+        // Mirrors `commands::plugins::get_claude_plugin_skills` for plugin skills;
+        // same kinds string ("local_skill") and same fingerprint computation.
+        let cached = store.get_translations().unwrap_or_default();
+        for skill in &mut skills {
+            let Some(desc) = skill.description.as_deref() else {
+                continue;
+            };
+            let fp = crate::core::translation_store::fingerprint("local_skill", &skill.name, Some(desc));
+            if let Some(rec) = cached.get(&fp) {
+                skill.zh_name = Some(rec.zh_name.clone());
+                skill.zh_description = Some(rec.zh_description.clone());
+            }
+        }
+
+        Ok(skills)
     })
     .await?
 }
@@ -881,6 +893,8 @@ mod tests {
             in_center: false,
             sync_status: "project_only".to_string(),
             center_skill_id: None,
+            zh_name: None,
+            zh_description: None,
             last_modified_at: None,
             content_hash: Some("same-hash".to_string()),
         };
