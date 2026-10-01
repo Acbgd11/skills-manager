@@ -1104,6 +1104,11 @@
       "deleteLocalBatchConfirm": "永久删除 {{agent}} 里的 {{count}} 个本地 Skill？这些 Skill 只存在于该 Agent 目录，删除后无法恢复。",
       "deletedLocalBatch": "已删除 {{count}} 个本地 Skill",
       "deleteLocalBatchFailed": "{{count}} 个本地 Skill 删除失败"
+    },
+    "agentPresence": {
+      "alsoOn": "同时在：{{agents}}",
+      "differsFrom": "内容与 {{agents}} 不一致",
+      "warningDot": "内容不一致"
     }
   },
   "pluginSkills": {

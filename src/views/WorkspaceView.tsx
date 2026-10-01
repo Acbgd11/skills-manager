@@ -29,7 +29,7 @@ import { DetailSheet } from "../components/DetailSheet";
 import { SkillMarkdown } from "../components/SkillMarkdown";
 import { DocumentDiffViewer } from "../components/DocumentDiffViewer";
 import * as api from "../lib/tauri";
-import type { ManagedSkill, ProjectSkill } from "../lib/tauri";
+import type { ManagedSkill, ProjectSkill, AgentPresenceEntry, CrossAgentSkill } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
 import { getTagActiveColor, getTagColor, pruneStaleTagFilters, UNTAGGED_FILTER } from "../lib/skillTags";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
@@ -60,6 +60,7 @@ function WorkspaceSkillCard({
   actionsHover = false,
   selectable = false,
   selected = false,
+  presenceRow,
   onClick,
 }: {
   viewMode: "grid" | "list";
@@ -74,6 +75,8 @@ function WorkspaceSkillCard({
   /** Multi-select mode: the leading slot becomes a checkbox and clicks select. */
   selectable?: boolean;
   selected?: boolean;
+  /** Other agents that also have a skill with this name (read-only). */
+  presenceRow?: ReactNode;
   onClick: () => void;
 }) {
   const leadingSlot = selectable
@@ -111,6 +114,7 @@ function WorkspaceSkillCard({
         <p className="min-w-0 flex-1 truncate text-[13px] text-muted">
           {description || "-"}
         </p>
+        {presenceRow}
         {tags.length > 0 && (
           <div className="flex shrink-0 items-center gap-1.5">
             {tags.map((tag) => (
@@ -180,6 +184,7 @@ function WorkspaceSkillCard({
         <p className="truncate text-[13px] leading-[18px] text-muted">
           {description || "-"}
         </p>
+        {presenceRow}
         {tags.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1">
             {tags.map((tag) => (
@@ -202,6 +207,88 @@ function WorkspaceSkillCard({
         </span>
         {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Other agents that also carry a skill with this name. Read-only: rendered as
+ * a subtle row of agent icons on the skill card. When another agent's copy has
+ * a different content hash, a small warning dot is overlaid on its icon so the
+ * user is never told two differing copies are identical.
+ */
+function PresenceIconRow({
+  entries,
+  currentAgent,
+  currentHash,
+}: {
+  entries: AgentPresenceEntry[];
+  currentAgent: string;
+  currentHash: string | null;
+}) {
+  const others = entries.filter((e) => e.agent !== currentAgent);
+  if (others.length === 0) return null;
+  return (
+    <div className="mt-1 flex shrink-0 items-center gap-1">
+      {others.map((entry) => {
+        const differs =
+          currentHash !== null &&
+          entry.content_hash !== null &&
+          entry.content_hash !== currentHash;
+        return (
+          <span key={entry.agent} className="relative inline-flex">
+            <AgentIcon
+              agentKey={entry.agent}
+              displayName={entry.agent_display_name}
+              className="h-4 w-4 rounded"
+            />
+            {differs && (
+              <span
+                className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500 ring-1 ring-surface"
+                title=""
+                aria-hidden="true"
+              />
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The detail-view counterpart: a single line naming the other agents, plus a
+ * separate note when any of them has content that differs.
+ */
+function PresenceDetailLine({
+  entries,
+  currentAgent,
+  currentHash,
+  t,
+}: {
+  entries: AgentPresenceEntry[];
+  currentAgent: string;
+  currentHash: string | null;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}) {
+  const others = entries.filter((e) => e.agent !== currentAgent);
+  if (others.length === 0) return null;
+  const names = others.map((e) => e.agent_display_name).join("、");
+  const differing = others.filter(
+    (e) =>
+      currentHash !== null &&
+      e.content_hash !== null &&
+      e.content_hash !== currentHash,
+  );
+  const differingNames = differing.map((e) => e.agent_display_name).join("、");
+  return (
+    <div className="flex flex-col gap-1 text-[12px] text-muted">
+      <span>{t("globalWorkspace.agentPresence.alsoOn", { agents: names })}</span>
+      {differing.length > 0 && (
+        <span className="text-amber-600 dark:text-amber-400">
+          {t("globalWorkspace.agentPresence.differsFrom", { agents: differingNames })}
+        </span>
+      )}
     </div>
   );
 }
@@ -251,6 +338,10 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   const [localSkillsLoading, setLocalSkillsLoading] = useState(false);
   const [localActionKey, setLocalActionKey] = useState<string | null>(null);
   const [localDetailSkill, setLocalDetailSkill] = useState<ProjectSkill | null>(null);
+  // Cross-agent skill presence: name (lowercased) -> entries. Read-only index
+  // covering every installed agent's local skills, used to show which other
+  // agents also carry a given skill (and whether their content matches).
+  const [presenceIndex, setPresenceIndex] = useState<CrossAgentSkill[]>([]);
   const [localDocContent, setLocalDocContent] = useState<string | null>(null);
   const [localCenterDocContent, setLocalCenterDocContent] = useState<string | null>(null);
   const [localDocLoading, setLocalDocLoading] = useState(false);
@@ -356,6 +447,23 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       loadedAgentKeyRef.current = null;
     };
   }, [currentToolKey, loadLocalSkills]);
+
+  // Cross-agent presence index: a single read scan across every installed
+  // agent. Cheap enough to refresh alongside the local-skill load, and shared
+  // by the skill cards and the detail sheet. Failures are silent — the row
+  // just won't render.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const index = await api.getSkillAgentPresence();
+        if (!cancelled) setPresenceIndex(index);
+      } catch {
+        if (!cancelled) setPresenceIndex([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [installedTools, managedSkills]);
 
   // Load real on-disk skill counts for every installed agent while the overview
   // is shown (#287). Scoped to the overview (currentToolKey === null); the
@@ -493,6 +601,16 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   );
 
   const localSkillKey = (skill: ProjectSkill) => `${skill.agent}:${skill.relative_path}`;
+
+  // Lowercased name -> entries, for the cross-agent presence row on cards and
+  // the "also on" line in the detail sheet.
+  const presenceByName = useMemo(() => {
+    const map = new Map<string, AgentPresenceEntry[]>();
+    for (const group of presenceIndex) {
+      map.set(group.name.toLowerCase(), group.entries);
+    }
+    return map;
+  }, [presenceIndex]);
 
   const {
     isMultiSelect, setIsMultiSelect,
@@ -1138,6 +1256,19 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
             const statusMeta = getLocalStatusMeta(t, skill.sync_status);
             const isManaged = !!skill.center_skill_id && managedLocalIds.has(skill.center_skill_id);
             const key = localSkillKey(skill);
+            const presenceEntries = presenceByName.get(skill.name.toLowerCase());
+            const presenceRow =
+              presenceEntries && presenceEntries.length > 1 && currentToolKey
+                ? (
+                  <PresenceIconRow
+                    entries={presenceEntries}
+                    currentAgent={currentToolKey}
+                    currentHash={
+                      presenceEntries.find((e) => e.agent === currentToolKey)?.content_hash ?? null
+                    }
+                  />
+                )
+                : null;
 
             return (
               <WorkspaceSkillCard
@@ -1153,6 +1284,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                 actionsHover={viewMode === "list"}
                 selectable={isMultiSelect}
                 selected={selectedIds.has(key)}
+                presenceRow={presenceRow}
                 onClick={() => isMultiSelect ? toggleSelect(key) : void openLocalDetail(skill)}
               />
             );
@@ -1182,13 +1314,29 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         description={localDetailSkill?.description}
         meta={
           localDetailSkill ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={cn("rounded-full px-2.5 py-1 text-[12px] font-medium", getLocalStatusMeta(t, localDetailSkill.sync_status).className)}>
-                {getLocalStatusMeta(t, localDetailSkill.sync_status).label}
-              </span>
-              <span className="rounded-full bg-surface-hover px-2.5 py-1 text-[12px] text-muted">
-                {localDetailSkill.relative_path}
-              </span>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn("rounded-full px-2.5 py-1 text-[12px] font-medium", getLocalStatusMeta(t, localDetailSkill.sync_status).className)}>
+                  {getLocalStatusMeta(t, localDetailSkill.sync_status).label}
+                </span>
+                <span className="rounded-full bg-surface-hover px-2.5 py-1 text-[12px] text-muted">
+                  {localDetailSkill.relative_path}
+                </span>
+              </div>
+              {(() => {
+                const entries = presenceByName.get(localDetailSkill.name.toLowerCase());
+                if (!entries || entries.length <= 1 || !currentToolKey) return null;
+                return (
+                  <PresenceDetailLine
+                    entries={entries}
+                    currentAgent={currentToolKey}
+                    currentHash={
+                      entries.find((e) => e.agent === currentToolKey)?.content_hash ?? null
+                    }
+                    t={t}
+                  />
+                );
+              })()}
             </div>
           ) : null
         }

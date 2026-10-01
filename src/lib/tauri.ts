@@ -842,6 +842,22 @@ export const updateGlobalLocalSkillFromCenter = (agent: string, skillRelativePat
 export const deleteGlobalLocalSkill = (agent: string, skillRelativePath: string) =>
   invoke<void>("delete_global_local_skill", { agent, skillRelativePath });
 
+// ── Cross-agent skill presence (read-only) ──
+
+export interface AgentPresenceEntry {
+  agent: string;
+  agent_display_name: string;
+  content_hash: string | null;
+}
+
+export interface CrossAgentSkill {
+  name: string;
+  entries: AgentPresenceEntry[];
+}
+
+export const getSkillAgentPresence = () =>
+  invoke<CrossAgentSkill[]>("get_skill_agent_presence");
+
 // ── Plugin Skills (read-only) ──
 
 export interface PluginSkillEntry {

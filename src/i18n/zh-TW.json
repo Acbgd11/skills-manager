@@ -1026,6 +1026,11 @@
       "deleteLocalBatchConfirm": "永久刪除 {{agent}} 裡的 {{count}} 個本機 Skill？這些 Skill 只存在於該 Agent 目錄，刪除後無法復原。",
       "deletedLocalBatch": "已刪除 {{count}} 個本機 Skill",
       "deleteLocalBatchFailed": "{{count}} 個本機 Skill 刪除失敗"
+    },
+    "agentPresence": {
+      "alsoOn": "同時在：{{agents}}",
+      "differsFrom": "內容與 {{agents}} 不一致",
+      "warningDot": "內容不一致"
     }
   },
   "pluginSkills": {

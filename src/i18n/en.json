@@ -1104,6 +1104,11 @@
       "deleteLocalBatchConfirm": "Permanently delete {{count}} local skills from {{agent}}? They exist only in this agent’s folder and cannot be recovered.",
       "deletedLocalBatch": "{{count}} local skills deleted",
       "deleteLocalBatchFailed": "{{count}} local skills failed to delete"
+    },
+    "agentPresence": {
+      "alsoOn": "Also on: {{agents}}",
+      "differsFrom": "Content differs from: {{agents}}",
+      "warningDot": "Content differs"
     }
   },
   "pluginSkills": {

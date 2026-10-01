@@ -1121,6 +1121,8 @@ pub fn run() {
             commands::agent_workspace::import_global_local_skill_to_center,
             commands::agent_workspace::update_global_local_skill_from_center,
             commands::agent_workspace::delete_global_local_skill,
+            // Cross-agent skill presence (read-only)
+            commands::presence::get_skill_agent_presence,
             // Presets
             commands::presets::get_presets,
             commands::presets::get_active_preset,
