@@ -342,12 +342,14 @@ function SkillDetailPanelContent({
                   : "bg-surface-hover text-muted hover:text-secondary"
               )}
               disabled={tab === "source" && sourceLoading}
+              title={t(`mySkills.docTabs.${tab}Hint`)}
             >
               {tab === "local"
                 ? t("mySkills.docTabs.local")
                 : tab === "diff"
                   ? t("mySkills.docTabs.diff")
                   : t("mySkills.docTabs.source")}
+              <span className="ml-1 text-[10px] opacity-60">?</span>
             </button>
           ))}
           {activeSourceDoc && (
@@ -364,7 +366,11 @@ function SkillDetailPanelContent({
         sourceDiffLoading ? (
           <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
         ) : activeSourceDiff ? (
-          <SkillSourceDiffViewer entries={activeSourceDiff.entries} />
+          activeSourceDiff.entries.length === 0 ? (
+            <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffEmpty")}</div>
+          ) : (
+            <SkillSourceDiffViewer entries={activeSourceDiff.entries} />
+          )
         ) : sourceDiffFailed ? (
           <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
         ) : (

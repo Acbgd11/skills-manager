@@ -52,7 +52,8 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
   const [error, setError] = useState<string | null>(null);
   const [showOfficial, setShowOfficial] = useState(true);
   const [showPlugins, setShowPlugins] = useState(true);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Plugin groups default to collapsed (empty = all collapsed); user expands on click.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState("");
   const [doc, setDoc] = useState<DocState>({
     open: false,
@@ -159,14 +160,15 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
   }, [data, matches, normalizedQuery]);
 
   // When query is non-empty, auto-expand all groups that have matching skills.
-  const effectiveCollapsed = useMemo(() => {
-    if (!normalizedQuery) return collapsed;
-    const expanded: Record<string, boolean> = {};
-    for (const gkey of Object.keys(collapsed)) {
-      expanded[gkey] = false; // expanded = not collapsed
+  const effectiveExpanded = useMemo(() => {
+    if (!normalizedQuery) return expanded;
+    // During search, force-expand every group (even ones the user collapsed).
+    const allExpanded: Record<string, boolean> = {};
+    for (const g of data?.groups ?? []) {
+      allExpanded[`${g.marketplace}/${g.plugin}`] = true;
     }
-    return expanded;
-  }, [collapsed, normalizedQuery]);
+    return allExpanded;
+  }, [expanded, normalizedQuery, data]);
 
   if (agentKey !== "claude_code") return null;
 
@@ -212,7 +214,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
     setDoc({ open: false, path: "", name: "", content: null, error: false });
 
   const toggleGroup = (key: string) =>
-    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const handleTranslate = async () => {
     if (translating) return;
@@ -271,7 +273,9 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-secondary px-2.5 py-1 text-[12px] text-muted">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          {t("translation.translating", { done, total })}
+          {done === 0
+            ? t("translation.translatingPreparing", { total })
+            : t("translation.translating", { done, total })}
         </span>
       );
     }
@@ -451,7 +455,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
                 <div className="flex flex-col gap-1 pb-1">
                   {filteredGroups.map((group) => {
                     const gkey = `${group.marketplace}/${group.plugin}`;
-                    const isCollapsed = effectiveCollapsed[gkey] ?? false;
+                    const isExpanded = effectiveExpanded[gkey] ?? false;
                     const repoUrl = group.repository ?? group.homepage;
                     return (
                       <div key={gkey} className="px-1">
@@ -461,10 +465,10 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
                             onClick={() => toggleGroup(gkey)}
                             className="mt-0.5 inline-flex shrink-0 items-center text-muted outline-none focus-visible:ring-2 focus-visible:ring-border rounded"
                           >
-                            {isCollapsed ? (
-                              <ChevronRight className="h-3.5 w-3.5" />
-                            ) : (
+                            {isExpanded ? (
                               <ChevronDown className="h-3.5 w-3.5" />
+                            ) : (
+                              <ChevronRight className="h-3.5 w-3.5" />
                             )}
                           </button>
                           <div className="min-w-0 flex-1">
@@ -514,7 +518,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
                             </button>
                           ) : null}
                         </div>
-                        {!isCollapsed && group.skills.length > 0 ? (
+                        {isExpanded && group.skills.length > 0 ? (
                           <div className="flex flex-col pb-1">
                             {group.skills.map(renderPluginRow)}
                           </div>

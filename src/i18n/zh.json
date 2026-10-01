@@ -332,11 +332,15 @@
     "sourceSubpath": "子路径",
     "sourceRevision": "版本",
     "docTabs": {
-      "local": "本地",
-      "diff": "差异",
-      "source": "来源"
+      "local": "本地文件",
+      "localHint": "这个智能体目录里现在实际在用的那份文件",
+      "diff": "有何不同",
+      "diffHint": "把本地文件与原件逐行对比，看两者差在哪",
+      "source": "原件",
+      "sourceHint": "这个技能安装时的原始版本（来自中央库或它的来源仓库）"
     },
     "sourceDiffUnavailable": "暂时无法读取来源版本内容",
+    "sourceDiffEmpty": "本地文件与原件内容一致，没有不同。",
     "sourceDiff": {
       "noChanges": "无差异 —— 来源与中心库内容一致",
       "status": {
@@ -1124,6 +1128,7 @@
     "translate": "一键翻译",
     "pendingBadge": "{{count}} 条待翻译",
     "translating": "翻译中…（第 {{done}}/{{total}} 批）",
+    "translatingPreparing": "翻译中…（共 {{total}} 批，等待第 1 批返回）",
     "translatedAll": "已全部翻译",
     "goToSettings": "去设置翻译接口",
     "resultSummary": "翻译完成：成功 {{ok}} 条，失败 {{failed}} 批",

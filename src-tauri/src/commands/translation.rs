@@ -266,6 +266,13 @@ pub async fn translate_skills(
         let created_at = chrono::Utc::now().to_rfc3339();
         let total = pending.len();
 
+        // Emit an initial progress event so the frontend can show the true
+        // batch count before the first (potentially slow) batch returns.
+        let _ = app.emit(
+            "translation-progress",
+            serde_json::json!({ "done": 0, "total": total }),
+        );
+
         for (index, batch) in pending.into_iter().enumerate() {
             let done = index + 1;
             let report = translator::run_translation(
