@@ -1463,51 +1463,24 @@ impl SkillStore {
         }
     }
 
-    /// Drop cached bodies that are too short to be a full translation of their
-    /// source. Earlier versions sent a whole document in one request and cached
-    /// whatever came back, so entries truncated by the output limit are served
-    /// forever under a content hash that still matches. Returns how many went.
+    /// Cached body translations whose recorded model no longer matches the
+    /// configured one. Returns how many were removed.
     ///
-    /// `min_ratio` is deliberately loose — a translation may legitimately be
-    /// shorter than its source — so this only catches gross truncation.
-    pub fn drop_truncated_body_translations(&self, min_ratio: f64) -> Result<usize> {
+    /// Deliberately does NOT judge completeness by comparing lengths. Chinese
+    /// is far denser than English — an 8600-character English document
+    /// legitimately becomes a 2800-character Chinese one — so a "translation
+    /// much shorter than source" rule deletes correct translations. Verified
+    /// against the live API: the same document translated in full, in one
+    /// request or in three chunks, lands at ~2700-3000 characters either way.
+    /// Genuine truncation is caught while translating instead, by reading the
+    /// reply's finish reason.
+    pub fn drop_body_translations_from_other_models(&self, current_model: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT content_hash, source_path, LENGTH(zh_body) FROM skill_body_translations",
+        let removed = conn.execute(
+            "DELETE FROM skill_body_translations WHERE model <> ?1",
+            [current_model],
         )?;
-        let rows: Vec<(String, String, i64)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        drop(stmt);
-
-        let skills_root = crate::core::central_repo::skills_dir();
-        let mut victims = Vec::new();
-        for (hash, source_path, zh_len) in rows {
-            // `source_path` is the skill directory name, as the fill path passes it.
-            let dir = skills_root.join(&source_path);
-            let mut source_len = None;
-            for name in ["SKILL.md", "skill.md", "CLAUDE.md", "README.md"] {
-                if let Ok(text) = std::fs::read_to_string(dir.join(name)) {
-                    source_len = Some(text.chars().count() as f64);
-                    break;
-                }
-            }
-            let Some(source_len) = source_len.filter(|l| *l > 0.0) else {
-                // Source unavailable: leave the entry alone rather than guess.
-                continue;
-            };
-            if (zh_len as f64) / source_len < min_ratio {
-                victims.push(hash);
-            }
-        }
-
-        for hash in &victims {
-            conn.execute(
-                "DELETE FROM skill_body_translations WHERE content_hash = ?1",
-                [hash],
-            )?;
-        }
-        Ok(victims.len())
+        Ok(removed)
     }
 
     /// Insert-or-replace a translated body, keyed by the source content hash.

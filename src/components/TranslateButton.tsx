@@ -82,7 +82,7 @@ export function TranslateButton({ onDone }: { onDone?: () => void | Promise<void
     setProgress(null);
     try {
       const report = await translateSkills();
-      const failed = report.failed_batches + report.body_failed;
+      const failed = report.failed_batches + report.body_failed + report.body_truncated;
       const summary = {
         ok: report.translated,
         bodies: report.bodies_done,

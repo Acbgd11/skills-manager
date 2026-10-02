@@ -964,15 +964,6 @@ pub fn run() {
                         step.elapsed().as_millis()
                     );
                 }
-                // Older builds cached whole bodies from a single request and
-                // kept whatever came back, so a body truncated at the output
-                // limit is still served under a matching content hash. Drop
-                // those so the next translate re-does them properly.
-                match store_for_backfill.drop_truncated_body_translations(0.8) {
-                    Ok(0) => {}
-                    Ok(n) => log::info!("startup: dropped {n} truncated body translation(s)"),
-                    Err(e) => log::warn!("startup: could not prune body translations: {e}"),
-                }
             });
 
             // Publish the CLI that ships in this bundle to a fixed path so

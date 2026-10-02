@@ -932,8 +932,10 @@ export interface TranslateReport {
   pending: number;
   /** Document bodies translated in this run. */
   bodies_done: number;
-  /** Bodies that failed or came back incomplete. */
+  /** Bodies whose reply was empty or errored. */
   body_failed: number;
+  /** Bodies the model cut off at the output limit; nothing was saved for them. */
+  body_truncated: number;
 }
 
 export const getTranslationSettings = () =>

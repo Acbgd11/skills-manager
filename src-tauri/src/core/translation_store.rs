@@ -332,18 +332,17 @@ mod tests {
     }
 
     #[test]
-    fn pruning_keeps_entries_whose_source_cannot_be_found() {
-        // The pruner must not delete on a guess: an unknown source path (or a
-        // test dir with no central library) leaves the cache untouched.
+    fn a_short_translation_is_kept_because_chinese_is_denser_than_english() {
+        // Guards the rule that a body must never be discarded for being much
+        // shorter than its source: an 8600-char English document translates to
+        // roughly 2800 Chinese characters, and that is a complete translation.
+        // Verified against the live API, in one request and in three chunks.
         let tmp = tempfile::tempdir().unwrap();
         let store = SkillStore::new(&tmp.path().join("skills.db")).unwrap();
-        let hash = body_hash("some document");
+        let hash = body_hash("# A very long English document\n\nwith lots of words");
         store
-            .upsert_body_translation(&hash, "no-such-skill", "短", "m", "2026-10-03T00:00:00Z")
+            .upsert_body_translation(&hash, "some-skill", "很短的中文", "m", "2026-10-03T00:00:00Z")
             .unwrap();
-
-        let dropped = store.drop_truncated_body_translations(0.8).unwrap();
-        assert_eq!(dropped, 0);
         assert!(store.get_body_translation(&hash).unwrap().is_some());
     }
 

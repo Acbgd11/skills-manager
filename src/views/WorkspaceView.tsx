@@ -368,7 +368,8 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   const [localZhDocContent, setLocalZhDocContent] = useState<string | null>(null);
   const [localZhDocLoading, setLocalZhDocLoading] = useState(false);
   const [localZhDocError, setLocalZhDocError] = useState(false);
-  const [localZhDocIncomplete, setLocalZhDocIncomplete] = useState(false);
+  /** Backend's own message when a translation failed, shown as-is. */
+  const [localZhDocErrorText, setLocalZhDocErrorText] = useState<string | null>(null);
   // (done, total) chunk progress while a long body translates.
   const [localZhChunk, setLocalZhChunk] = useState<{ done: number; total: number } | null>(null);
   const [uploadConfirmSkill, setUploadConfirmSkill] = useState<ProjectSkill | null>(null);
@@ -825,7 +826,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       setLocalDocContent(null);
       setLocalZhDocContent(null);
       setLocalZhDocError(false);
-      setLocalZhDocIncomplete(false);
+      setLocalZhDocErrorText(null);
       setLocalZhChunk(null);
       setLocalZhDocLoading(false);
       setLocalDocLoading(true);
@@ -879,26 +880,28 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     const requestId = localDetailRequestRef.current;
     setLocalZhDocLoading(true);
     setLocalZhDocError(false);
-    setLocalZhDocIncomplete(false);
+    setLocalZhDocErrorText(null);
     try {
       const zh = await api.translateSkillBody(localDocContent, localDetailSkill.relative_path);
       if (localDetailRequestRef.current !== requestId) return;
       if (zh) {
         setLocalZhDocContent(zh);
       } else {
-        // The backend returns nothing rather than caching an incomplete body,
-        // so distinguish "gave up on purpose" from a transport error.
+        // Nothing came back (Usually an empty reply). We can't fix it here, so
+        // say the translation did not arrive rather than guessing why.
         setLocalZhDocError(true);
-        setLocalZhDocIncomplete(true);
       }
       setLocalZhDocLoading(false);
-    } catch {
+    } catch (error) {
       if (localDetailRequestRef.current === requestId) {
         setLocalZhDocError(true);
+        // Surface the backend's own wording: it distinguishes a cut-off reply
+        // from a connection problem, and the user needs that difference.
+        setLocalZhDocErrorText(getErrorMessage(error, t("translation.bodyFailed")));
         setLocalZhDocLoading(false);
       }
     }
-  }, [localDetailSkill, localDocContent, localZhDocLoading]);
+  }, [localDetailSkill, localDocContent, localZhDocLoading, t]);
 
   const existsInGlobal = useCallback(
     (skill: ManagedSkill, agentK: string) =>
@@ -1522,11 +1525,9 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           ) : (
             <div className="mt-12 flex flex-col items-center gap-3 text-center">
               <p className="text-[13px] text-muted">
-                {localZhDocIncomplete
-                  ? t("translation.bodyIncomplete")
-                  : localZhDocError
-                    ? t("translation.bodyFailed")
-                    : t("translation.bodyNotTranslated")}
+                {localZhDocError
+                  ? (localZhDocErrorText ?? t("translation.bodyFailed"))
+                  : t("translation.bodyNotTranslated")}
               </p>
               <button
                 type="button"

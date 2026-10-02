@@ -45,8 +45,10 @@ pub struct TranslateReportDto {
     pub pending: usize,
     /// Bodies translated in this run (the large document text).
     pub bodies_done: usize,
-    /// Bodies that failed or came back incomplete.
+    /// Bodies whose reply was empty or errored.
     pub body_failed: usize,
+    /// Bodies the model cut off at the output limit; nothing was saved for them.
+    pub body_truncated: usize,
 }
 
 fn keyring_entry() -> Result<keyring::Entry, AppError> {
@@ -336,39 +338,61 @@ fn collect_bodies(store: &SkillStore) -> Vec<(String, String)> {
     out
 }
 
-/// Translate one body through the chunked path and cache it. Returns `true`
-/// when a translation was stored, `false` when the content was already cached
-/// or the model's reply was unusable. Never caches an incomplete result.
+/// Outcome of translating one document body.
+enum BodyOutcome {
+    /// Stored (or already cached).
+    Done,
+    /// The model's reply was cut off at the output limit, so nothing was saved.
+    Truncated,
+    /// The model returned nothing usable for one of the chunks.
+    Empty,
+}
+
+/// Translate one body through the chunked path and cache it. Never caches an
+/// incomplete result: a truncated chunk means the whole document is retried
+/// next time rather than a partial translation being served forever.
 fn translate_one_body(
     store: &SkillStore,
     cfg: &TranslationConfig,
     content: &str,
     source_path: &str,
-) -> Result<bool, AppError> {
+) -> Result<BodyOutcome, AppError> {
     if content.trim().is_empty() {
-        return Ok(false);
+        return Ok(BodyOutcome::Empty);
     }
     let hash = translation_store::body_hash(content);
     if store.get_body_translation(&hash).map_err(AppError::db)?.is_some() {
-        return Ok(false);
+        return Ok(BodyOutcome::Done);
     }
     let chunks =
         translation_store::split_markdown_chunks(content, translation_store::BODY_CHUNK_CHARS);
     if chunks.is_empty() {
-        return Ok(false);
+        return Ok(BodyOutcome::Empty);
     }
 
+    log::info!(
+        "body translate: {source_path} is {} chars in {} chunk(s)",
+        content.chars().count(),
+        chunks.len()
+    );
     let mut parts = Vec::with_capacity(chunks.len());
-    for chunk in &chunks {
+    for (index, chunk) in chunks.iter().enumerate() {
         let prompt = translation_store::build_body_prompt(chunk);
         let (reply, truncated) = call_model(cfg, &prompt)?;
+        log::info!(
+            "body translate: {source_path} chunk {}/{} -> {} chars (truncated={truncated})",
+            index + 1,
+            chunks.len(),
+            reply.chars().count()
+        );
         if truncated {
             log::warn!("body chunk hit the output limit; refusing to cache {source_path}");
-            return Ok(false);
+            return Ok(BodyOutcome::Truncated);
         }
         let part = translation_store::strip_code_fence(&reply);
         if part.trim().is_empty() {
-            return Ok(false);
+            log::warn!("body chunk {index} came back empty for {source_path}");
+            return Ok(BodyOutcome::Empty);
         }
         parts.push(part);
     }
@@ -377,7 +401,7 @@ fn translate_one_body(
     store
         .upsert_body_translation(&hash, source_path, &parts.join("\n\n"), &cfg.model, &created_at)
         .map_err(AppError::db)?;
-    Ok(true)
+    Ok(BodyOutcome::Done)
 }
 
 #[tauri::command]
@@ -464,8 +488,12 @@ pub async fn translate_skills(
         // after, so a body failure never blocks the cheap name pass.
         let bodies = collect_bodies(&store);
         let body_total = bodies.len();
+        log::info!(
+            "translate_skills: {translated_total} names done, {body_total} body(ies) to consider"
+        );
         let mut bodies_done = 0usize;
         let mut body_failed = 0usize;
+        let mut body_truncated = 0usize;
         for (path, content) in bodies {
             let hash = translation_store::body_hash(&content);
             if store.get_body_translation(&hash).map_err(AppError::db)?.is_some() {
@@ -476,8 +504,9 @@ pub async fn translate_skills(
                 serde_json::json!({ "done": bodies_done, "total": body_total, "phase": "body" }),
             );
             match translate_one_body(&store, &cfg, &content, &path) {
-                Ok(true) => bodies_done += 1,
-                Ok(false) => {}
+                Ok(BodyOutcome::Done) => bodies_done += 1,
+                Ok(BodyOutcome::Truncated) => body_truncated += 1,
+                Ok(BodyOutcome::Empty) => body_failed += 1,
                 Err(e) => {
                     log::warn!("body translation failed for {path}: {e}");
                     body_failed += 1;
@@ -491,6 +520,7 @@ pub async fn translate_skills(
             pending: remaining,
             bodies_done,
             body_failed,
+            body_truncated,
         })
     })
     .await?
@@ -552,7 +582,7 @@ pub async fn translate_skill_body(
             serde_json::json!({ "done": 0, "total": total }),
         );
         match translate_one_body(&store, &cfg, &content, &source_path) {
-            Ok(true) => {
+            Ok(BodyOutcome::Done) => {
                 let _ = app.emit(
                     "body-translation-progress",
                     serde_json::json!({ "done": total, "total": total }),
@@ -561,7 +591,10 @@ pub async fn translate_skill_body(
                 let stored = store.get_body_translation(&hash).map_err(AppError::db)?;
                 Ok(stored)
             }
-            Ok(false) => Ok(None),
+            Ok(BodyOutcome::Truncated) => Err(AppError::network(
+                "译文被模型的输出长度上限截断了，已放弃保存。请重试；若反复出现请改用更小的分段或更长的输出上限。",
+            )),
+            Ok(BodyOutcome::Empty) => Ok(None),
             Err(e) => {
                 log::warn!("body translation failed for {source_path}: {e}");
                 Err(e)
