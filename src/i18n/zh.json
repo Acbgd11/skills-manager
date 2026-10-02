@@ -385,14 +385,15 @@
     "sourceSubpath": "子路径",
     "sourceRevision": "版本",
     "docTabs": {
-      "local": "本机在用",
-      "localHint": "智能体目录里当下正在用的那份文件",
-      "diff": "差异",
-      "diffHint": "把「本机在用」与「母版」逐行对比，看两者差在哪",
-      "source": "母版",
-      "sourceHint": "技能库里你维护的那份（本机在用的常是它的链接或副本）",
       "zh": "中文",
-      "zhHint": "机器翻译的正文"
+      "zhHint": "机器翻译的正文",
+      "body": "正文",
+      "local": "本地文件",
+      "localHint": "这个技能在中央库里现在的那份",
+      "diff": "有何不同",
+      "diffHint": "把本地文件与来源仓库版本逐行对比",
+      "source": "原件",
+      "sourceHint": "这个技能安装时的原始版本（来自它的来源仓库）"
     },
     "sourceDiffUnavailable": "暂时无法读取来源版本内容",
     "sourceDiffEmpty": "本地文件与原件内容一致，没有不同。",
@@ -521,8 +522,7 @@
       "apply": "同步 {{count}} 项",
       "noAgents": "没有已安装并启用的 Agent。",
       "allSynced": "选中的 Skill 都已同步到这个 Agent"
-    },
-    "localIsLinkedNote": "这个智能体是通过「链接」直接使用母版的，两份永远是同一份文件，所以「差异」会一直是空的。想出现差异，请在同步时选「文件复制」。"
+    }
   },
   "install": {
     "title": "安装 Skills",

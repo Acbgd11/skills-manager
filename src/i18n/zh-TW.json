@@ -382,14 +382,15 @@
     "confirmUnsyncMessage": "將從以下 {{count}} 個 Agent 移除「{{name}}」的同步結果。",
     "sourceRef": "來源位置",
     "docTabs": {
-      "local": "本機在用",
-      "localHint": "智慧體目錄裡當下正在用的那份檔案",
-      "diff": "差異",
-      "diffHint": "把「本機在用」與「母版」逐行對比，看兩者差在哪",
-      "source": "母版",
-      "sourceHint": "技能庫裡你維護的那份（本機在用的常是它的連結或副本）",
       "zh": "中文",
-      "zhHint": "機器翻譯的內文"
+      "zhHint": "機器翻譯的內文",
+      "body": "內文",
+      "local": "本機檔案",
+      "localHint": "這個技能在中央庫裡現在的那份",
+      "diff": "有何不同",
+      "diffHint": "把本機檔案與來源倉庫版本逐行對比",
+      "source": "原件",
+      "sourceHint": "這個技能安裝時的原始版本（來自它的來源倉庫）"
     },
     "sourceDiffUnavailable": "暫時無法讀取來源版本內容",
     "sourceDiffEmpty": "本機檔案與原件內容一致，沒有不同。",
@@ -484,8 +485,7 @@
       "apply": "同步 {{count}} 項",
       "noAgents": "沒有已安裝並啟用的 Agent。",
       "allSynced": "選取的 Skill 都已同步到這個 Agent"
-    },
-    "localIsLinkedNote": "這個智慧體是透過「連結」直接使用母版的，兩份永遠是同一個檔案，所以「差異」會一直是空的。想出現差異，請在同步時選「檔案複製」。"
+    }
   },
   "install": {
     "title": "安裝 Skills",

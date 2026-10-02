@@ -385,14 +385,15 @@
     "sourceSubpath": "Subpath",
     "sourceRevision": "Revision",
     "docTabs": {
-      "local": "In Use",
-      "localHint": "The file the agent is using right now",
-      "diff": "Differences",
-      "diffHint": "Line-by-line comparison of In Use against Master",
-      "source": "Master",
-      "sourceHint": "The copy you maintain in the skill library; what's in use is usually a link or copy of it",
       "zh": "中文",
-      "zhHint": "Machine-translated body"
+      "zhHint": "Machine-translated body",
+      "body": "Document",
+      "local": "Local File",
+      "localHint": "The copy currently in the central library",
+      "diff": "What's Different",
+      "diffHint": "Line-by-line comparison against the source repository",
+      "source": "Original",
+      "sourceHint": "The original version this skill was installed from"
     },
     "sourceDiffUnavailable": "Source content is unavailable right now",
     "sourceDiffEmpty": "The local file matches the original — no differences.",
@@ -521,8 +522,7 @@
       "apply": "Sync {{count}}",
       "noAgents": "No installed and enabled agents.",
       "allSynced": "Every selected skill is already on this agent"
-    },
-    "localIsLinkedNote": "This agent uses the Master copy directly through a link, so the two are always identical — the Differences tab will stay empty until you sync it as a file copy."
+    }
   },
   "install": {
     "title": "Install Skills",

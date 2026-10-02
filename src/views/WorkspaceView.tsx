@@ -28,7 +28,6 @@ import { PresetBar } from "../components/PresetBar";
 import { AgentIcon } from "../components/AgentIcon";
 import { DetailSheet } from "../components/DetailSheet";
 import { SkillMarkdown } from "../components/SkillMarkdown";
-import { DocumentDiffViewer } from "../components/DocumentDiffViewer";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectSkill, AgentPresenceEntry, CrossAgentSkill } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
@@ -363,10 +362,8 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   // agents also carry a given skill (and whether their content matches).
   const [presenceIndex, setPresenceIndex] = useState<CrossAgentSkill[]>([]);
   const [localDocContent, setLocalDocContent] = useState<string | null>(null);
-  const [localCenterDocContent, setLocalCenterDocContent] = useState<string | null>(null);
   const [localDocLoading, setLocalDocLoading] = useState(false);
-  const [localCenterDocLoading, setLocalCenterDocLoading] = useState(false);
-  const [localContentTab, setLocalContentTab] = useState<"local" | "diff" | "center" | "zh">("local");
+  const [localContentTab, setLocalContentTab] = useState<"local" | "zh">("local");
   const [localZhDocContent, setLocalZhDocContent] = useState<string | null>(null);
   const [localZhDocLoading, setLocalZhDocLoading] = useState(false);
   const [localZhDocError, setLocalZhDocError] = useState(false);
@@ -822,12 +819,10 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       setLocalDetailSkill(skill);
       setLocalContentTab("local");
       setLocalDocContent(null);
-      setLocalCenterDocContent(null);
       setLocalZhDocContent(null);
       setLocalZhDocError(false);
       setLocalZhDocLoading(false);
       setLocalDocLoading(true);
-      setLocalCenterDocLoading(!!skill.center_skill_id);
 
       api
         .getGlobalLocalSkillDocument(currentTool.key, skill.relative_path)
@@ -848,33 +843,9 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         .finally(() => {
           if (localDetailRequestRef.current === requestId) setLocalDocLoading(false);
         });
-
-      if (skill.center_skill_id) {
-        api
-          .getSkillDocument(skill.center_skill_id)
-          .then((doc) => {
-            if (localDetailRequestRef.current === requestId) setLocalCenterDocContent(doc.content);
-          })
-          .catch(() => {
-            if (localDetailRequestRef.current === requestId) setLocalCenterDocContent(null);
-          })
-          .finally(() => {
-            if (localDetailRequestRef.current === requestId) setLocalCenterDocLoading(false);
-          });
-      }
     },
     [currentTool]
   );
-
-  // A skill synced as a link points straight at the center copy, so the two
-  // documents are literally the same file and a diff can only ever be empty.
-  // Detect that so the diff tab can explain it instead of showing nothing.
-  const localIsLinked = useMemo(() => {
-    if (!localDetailSkill?.center_skill_id || !currentToolKey) return false;
-    const managed = managedSkills.find((s) => s.id === localDetailSkill.center_skill_id);
-    const target = managed?.targets.find((tg) => tg.tool === currentToolKey);
-    return target?.mode === "symlink";
-  }, [localDetailSkill, currentToolKey, managedSkills]);
 
   // Translate the detail view's body on demand. The backend caches by content
   // hash, so re-opening the same skill costs nothing after the first run.
@@ -1473,7 +1444,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       >
         {localDetailSkill && (
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            {(["local", "diff", "center", "zh"] as const).map((tab) => (
+            {(["local", "zh"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -1484,18 +1455,8 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                     ? "bg-accent text-white"
                     : "bg-surface-hover text-muted hover:text-secondary"
                 )}
-                disabled={
-                  (tab === "diff" || tab === "center") &&
-                  (localCenterDocLoading || !localDetailSkill.center_skill_id)
-                }
               >
-                {tab === "local"
-                  ? t("mySkills.docTabs.local")
-                  : tab === "diff"
-                    ? t("mySkills.docTabs.diff")
-                    : tab === "center"
-                      ? t("project.docTabs.center")
-                      : t("mySkills.docTabs.zh")}
+                {tab === "local" ? t("mySkills.docTabs.body") : t("mySkills.docTabs.zh")}
               </button>
             ))}
           </div>
@@ -1503,28 +1464,6 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
 
         {localDocLoading ? (
           <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
-        ) : localContentTab === "diff" ? (
-          localDocContent && localCenterDocContent ? (
-            localIsLinked ? (
-              <div className="rounded-md border border-border-subtle bg-bg-secondary p-3 text-[13px] text-muted">
-                {t("mySkills.localIsLinkedNote")}
-              </div>
-            ) : (
-              <DocumentDiffViewer original={localDocContent} updated={localCenterDocContent} />
-            )
-          ) : localCenterDocLoading ? (
-            <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
-          ) : (
-            <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
-          )
-        ) : localContentTab === "center" ? (
-          localCenterDocLoading ? (
-            <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
-          ) : localCenterDocContent ? (
-            <SkillMarkdown content={localCenterDocContent} />
-          ) : (
-            <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
-          )
         ) : localContentTab === "zh" ? (
           localZhDocLoading ? (
             <div className="mt-12 text-center text-[13px] text-muted">
