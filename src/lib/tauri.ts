@@ -930,6 +930,10 @@ export interface TranslateReport {
   translated: number;
   failed_batches: number;
   pending: number;
+  /** Document bodies translated in this run. */
+  bodies_done: number;
+  /** Bodies that failed or came back incomplete. */
+  body_failed: number;
 }
 
 export const getTranslationSettings = () =>

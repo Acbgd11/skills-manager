@@ -1194,8 +1194,8 @@
     "translatingPreparing": "Translating… ({{total}} batches, waiting for the first)",
     "translatedAll": "All translated",
     "goToSettings": "Set up translation",
-    "resultSummary": "Translation done: {{ok}} succeeded, {{failed}} batches failed",
-    "noPending": "Nothing to translate",
+    "resultSummary": "Done: {{ok}} names updated, {{bodies}} bodies translated, {{failed}} failed",
+    "noPending": "Everything is already translated.",
     "sectionTitle": "AI translation",
     "sectionHint": "The key is stored in the system credential vault; translations live only in this app's own cache and are never written into the plugin directory.",
     "endpoint": "Endpoint URL",
@@ -1223,6 +1223,7 @@
     "viewOriginal": "View original",
     "translatingBodyChunk": "Translating body… (part {{done}}/{{total}})",
     "bodyIncomplete": "The translation came back incomplete and was not saved. Try again.",
-    "alreadyRunning": "A translation is already running. Wait for it to finish."
+    "alreadyRunning": "A translation is already running. Wait for it to finish.",
+    "translatingBodies": "Translating document bodies… ({{done}}/{{total}})"
   }
 }

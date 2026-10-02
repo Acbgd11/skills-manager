@@ -1119,8 +1119,8 @@
     "translatingPreparing": "翻譯中…（共 {{total}} 批，等待第 1 批返回）",
     "translatedAll": "已全部翻譯",
     "goToSettings": "去設定翻譯介面",
-    "resultSummary": "翻譯完成：成功 {{ok}} 條，失敗 {{failed}} 批",
-    "noPending": "沒有需要翻譯的",
+    "resultSummary": "完成：名稱/簡介 {{ok}} 條，內文 {{bodies}} 篇，失敗 {{failed}} 項",
+    "noPending": "已經全部翻譯過了。",
     "sectionTitle": "AI 翻譯",
     "sectionHint": "金鑰存在系統憑證庫；翻譯結果只存在本軟體自己的快取裡，不會寫進外掛目錄。",
     "endpoint": "介面位址",
@@ -1148,6 +1148,7 @@
     "viewOriginal": "看原文",
     "translatingBodyChunk": "正在翻譯內文…（第 {{done}}/{{total}} 段）",
     "bodyIncomplete": "譯文不完整，已放棄儲存。請重試。",
-    "alreadyRunning": "已有翻譯任務在進行，請等它跑完。"
+    "alreadyRunning": "已有翻譯任務在進行，請等它跑完。",
+    "translatingBodies": "正在翻譯內文…（{{done}}/{{total}} 篇）"
   }
 }

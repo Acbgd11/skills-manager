@@ -332,6 +332,22 @@ mod tests {
     }
 
     #[test]
+    fn pruning_keeps_entries_whose_source_cannot_be_found() {
+        // The pruner must not delete on a guess: an unknown source path (or a
+        // test dir with no central library) leaves the cache untouched.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("skills.db")).unwrap();
+        let hash = body_hash("some document");
+        store
+            .upsert_body_translation(&hash, "no-such-skill", "短", "m", "2026-10-03T00:00:00Z")
+            .unwrap();
+
+        let dropped = store.drop_truncated_body_translations(0.8).unwrap();
+        assert_eq!(dropped, 0);
+        assert!(store.get_body_translation(&hash).unwrap().is_some());
+    }
+
+    #[test]
     fn fingerprint_is_stable_and_content_sensitive() {
         let a = fingerprint("plugin_skill", "brainstorming", Some("Design first"));
         let b = fingerprint("plugin_skill", "brainstorming", Some("Design first"));

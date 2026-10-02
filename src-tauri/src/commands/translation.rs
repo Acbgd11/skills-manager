@@ -43,6 +43,10 @@ pub struct TranslateReportDto {
     pub translated: usize,
     pub failed_batches: usize,
     pub pending: usize,
+    /// Bodies translated in this run (the large document text).
+    pub bodies_done: usize,
+    /// Bodies that failed or came back incomplete.
+    pub body_failed: usize,
 }
 
 fn keyring_entry() -> Result<keyring::Entry, AppError> {
@@ -295,6 +299,87 @@ pub async fn get_translation_status(
     .await?
 }
 
+/// Every document body worth translating: each installed+enabled agent's local
+/// skills, plus the central library's own copies. Only bodies with real content
+/// are returned. Yields `(source_path, content)`.
+///
+/// The content is exactly what the detail view renders, so `body_hash` here
+/// matches the hash the fill path computes for the same document.
+fn collect_bodies(store: &SkillStore) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for adapter in tool_adapters::enabled_installed_adapters(store) {
+        let root = adapter.skills_dir();
+        for skill in crate::commands::agent_workspace::read_agent_local_skills(&adapter) {
+            let dir = root.join(&skill.relative_path);
+            let mut found = false;
+            for candidate in ["SKILL.md", "skill.md", "CLAUDE.md", "README.md"] {
+                let file = dir.join(candidate);
+                if let Ok(content) = std::fs::read_to_string(&file) {
+                    if content.trim().is_empty() {
+                        continue;
+                    }
+                    // One document, however many agents link to it.
+                    if seen.insert(translation_store::body_hash(&content)) {
+                        out.push((skill.name.clone(), content));
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                continue;
+            }
+        }
+    }
+    out
+}
+
+/// Translate one body through the chunked path and cache it. Returns `true`
+/// when a translation was stored, `false` when the content was already cached
+/// or the model's reply was unusable. Never caches an incomplete result.
+fn translate_one_body(
+    store: &SkillStore,
+    cfg: &TranslationConfig,
+    content: &str,
+    source_path: &str,
+) -> Result<bool, AppError> {
+    if content.trim().is_empty() {
+        return Ok(false);
+    }
+    let hash = translation_store::body_hash(content);
+    if store.get_body_translation(&hash).map_err(AppError::db)?.is_some() {
+        return Ok(false);
+    }
+    let chunks =
+        translation_store::split_markdown_chunks(content, translation_store::BODY_CHUNK_CHARS);
+    if chunks.is_empty() {
+        return Ok(false);
+    }
+
+    let mut parts = Vec::with_capacity(chunks.len());
+    for chunk in &chunks {
+        let prompt = translation_store::build_body_prompt(chunk);
+        let (reply, truncated) = call_model(cfg, &prompt)?;
+        if truncated {
+            log::warn!("body chunk hit the output limit; refusing to cache {source_path}");
+            return Ok(false);
+        }
+        let part = translation_store::strip_code_fence(&reply);
+        if part.trim().is_empty() {
+            return Ok(false);
+        }
+        parts.push(part);
+    }
+
+    let created_at = chrono::Utc::now().to_rfc3339();
+    store
+        .upsert_body_translation(&hash, source_path, &parts.join("\n\n"), &cfg.model, &created_at)
+        .map_err(AppError::db)?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn translate_skills(
     app: AppHandle,
@@ -373,10 +458,39 @@ pub async fn translate_skills(
         }
 
         let remaining = count_pending(&store, &items)?;
+
+        // Names and descriptions are done; now the document bodies. They are
+        // much larger, so they are counted and reported separately and run
+        // after, so a body failure never blocks the cheap name pass.
+        let bodies = collect_bodies(&store);
+        let body_total = bodies.len();
+        let mut bodies_done = 0usize;
+        let mut body_failed = 0usize;
+        for (path, content) in bodies {
+            let hash = translation_store::body_hash(&content);
+            if store.get_body_translation(&hash).map_err(AppError::db)?.is_some() {
+                continue;
+            }
+            let _ = app.emit(
+                "translation-progress",
+                serde_json::json!({ "done": bodies_done, "total": body_total, "phase": "body" }),
+            );
+            match translate_one_body(&store, &cfg, &content, &path) {
+                Ok(true) => bodies_done += 1,
+                Ok(false) => {}
+                Err(e) => {
+                    log::warn!("body translation failed for {path}: {e}");
+                    body_failed += 1;
+                }
+            }
+        }
+
         Ok(TranslateReportDto {
             translated: translated_total,
             failed_batches,
             pending: remaining,
+            bodies_done,
+            body_failed,
         })
     })
     .await?
@@ -432,57 +546,27 @@ pub async fn translate_skill_body(
         let cfg = read_config(&store);
         validate_config(&cfg)?;
 
-        let chunks = translation_store::split_markdown_chunks(
-            &content,
-            translation_store::BODY_CHUNK_CHARS,
-        );
-        if chunks.is_empty() {
-            return Ok(None);
-        }
-        let total = chunks.len();
-
-        let mut parts: Vec<String> = Vec::with_capacity(total);
-        for (index, chunk) in chunks.iter().enumerate() {
-            let _ = app.emit(
-                "body-translation-progress",
-                serde_json::json!({ "done": index, "total": total }),
-            );
-            let prompt = translation_store::build_body_prompt(chunk);
-            let (reply, truncated) = match call_model(&cfg, &prompt) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("body translation chunk {}/{} failed: {e}", index + 1, total);
-                    return Ok(None);
-                }
-            };
-            // A truncated chunk would silently drop the tail of that section,
-            // and the rejoined document would be cached as complete.
-            if truncated {
-                log::warn!(
-                    "body translation chunk {}/{} hit the output limit; refusing to cache",
-                    index + 1,
-                    total
-                );
-                return Ok(None);
-            }
-            let part = translation_store::strip_code_fence(&reply);
-            if part.trim().is_empty() {
-                log::warn!("body translation chunk {}/{} came back empty", index + 1, total);
-                return Ok(None);
-            }
-            parts.push(part);
-        }
+        let total = translation_store::chunk_count(&content, translation_store::BODY_CHUNK_CHARS);
         let _ = app.emit(
             "body-translation-progress",
-            serde_json::json!({ "done": total, "total": total }),
+            serde_json::json!({ "done": 0, "total": total }),
         );
-
-        let translated = parts.join("\n\n");
-        let created_at = chrono::Utc::now().to_rfc3339();
-        store
-            .upsert_body_translation(&hash, &source_path, &translated, &cfg.model, &created_at)
-            .map_err(AppError::db)?;
-        Ok(Some(translated))
+        match translate_one_body(&store, &cfg, &content, &source_path) {
+            Ok(true) => {
+                let _ = app.emit(
+                    "body-translation-progress",
+                    serde_json::json!({ "done": total, "total": total }),
+                );
+                // Read it back so the caller always gets the cached text.
+                let stored = store.get_body_translation(&hash).map_err(AppError::db)?;
+                Ok(stored)
+            }
+            Ok(false) => Ok(None),
+            Err(e) => {
+                log::warn!("body translation failed for {source_path}: {e}");
+                Err(e)
+            }
+        }
     })
     .await?
 }

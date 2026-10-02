@@ -32,7 +32,11 @@ export function TranslateButton({ onDone }: { onDone?: () => void | Promise<void
   const [trStatus, setTrStatus] = useState<TranslationStatus | null>(null);
   const [trSettings, setTrSettings] = useState<TranslationSettings | null>(null);
   const [translating, setTranslating] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{
+    done: number;
+    total: number;
+    phase: string;
+  } | null>(null);
 
   // Fetch translation status + settings once on mount.
   useEffect(() => {
@@ -44,13 +48,19 @@ export function TranslateButton({ onDone }: { onDone?: () => void | Promise<void
       .catch(() => {});
   }, []);
 
-  // Listen for batch progress while a translation is in flight; unlisten on cleanup.
+  // Listen for progress while a translation is in flight; unlisten on cleanup.
+  // The run has two phases — names/descriptions first, then the large document
+  // bodies — so the phase is carried through and shown to the user.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let active = true;
-    listen<{ done: number; total: number }>("translation-progress", (event) => {
+    listen<{ done: number; total: number; phase?: string }>("translation-progress", (event) => {
       if (!active) return;
-      setProgress({ done: event.payload.done, total: event.payload.total });
+      setProgress({
+        done: event.payload.done,
+        total: event.payload.total,
+        phase: event.payload.phase ?? "names",
+      });
     })
       .then((fn) => {
         if (!active) {
@@ -72,20 +82,16 @@ export function TranslateButton({ onDone }: { onDone?: () => void | Promise<void
     setProgress(null);
     try {
       const report = await translateSkills();
-      if (report.translated > 0 && report.failed_batches === 0) {
-        toast.success(
-          t("translation.resultSummary", {
-            ok: report.translated,
-            failed: report.failed_batches,
-          })
-        );
-      } else if (report.failed_batches > 0) {
-        toast.error(
-          t("translation.resultSummary", {
-            ok: report.translated,
-            failed: report.failed_batches,
-          })
-        );
+      const failed = report.failed_batches + report.body_failed;
+      const summary = {
+        ok: report.translated,
+        bodies: report.bodies_done,
+        failed,
+      };
+      if ((report.translated > 0 || report.bodies_done > 0) && failed === 0) {
+        toast.success(t("translation.resultSummary", summary));
+      } else if (failed > 0) {
+        toast.error(t("translation.resultSummary", summary));
       } else {
         toast.info(t("translation.noPending"));
       }
@@ -123,12 +129,15 @@ export function TranslateButton({ onDone }: { onDone?: () => void | Promise<void
   if (translating) {
     const done = progress?.done ?? 0;
     const total = progress?.total ?? 0;
+    const isBody = progress?.phase === "body";
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-secondary px-2.5 py-1 text-[12px] text-muted">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         {done === 0
           ? t("translation.translatingPreparing", { total })
-          : t("translation.translating", { done, total })}
+          : isBody
+            ? t("translation.translatingBodies", { done, total })
+            : t("translation.translating", { done, total })}
       </span>
     );
   }

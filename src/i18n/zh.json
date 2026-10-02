@@ -1194,8 +1194,8 @@
     "translatingPreparing": "翻译中…（共 {{total}} 批，等待第 1 批返回）",
     "translatedAll": "已全部翻译",
     "goToSettings": "去设置翻译接口",
-    "resultSummary": "翻译完成：成功 {{ok}} 条，失败 {{failed}} 批",
-    "noPending": "没有需要翻译的",
+    "resultSummary": "完成：名称/简介 {{ok}} 条，正文 {{bodies}} 篇，失败 {{failed}} 项",
+    "noPending": "已经全部翻译过了。",
     "sectionTitle": "AI 翻译",
     "sectionHint": "钥匙存在系统凭据库；翻译结果只存在本软件自己的缓存里，不会写进插件目录。",
     "endpoint": "接口地址",
@@ -1223,6 +1223,7 @@
     "viewOriginal": "看原文",
     "translatingBodyChunk": "正在翻译正文…（第 {{done}}/{{total}} 段）",
     "bodyIncomplete": "译文不完整，已放弃保存。请重试。",
-    "alreadyRunning": "已有翻译任务在进行，请等它跑完。"
+    "alreadyRunning": "已有翻译任务在进行，请等它跑完。",
+    "translatingBodies": "正在翻译正文…（{{done}}/{{total}} 篇）"
   }
 }

@@ -87,9 +87,17 @@ pub trait TranslationBackend {
 
 pub struct HttpBackend;
 
+/// Seconds to wait for one translation request.
+///
+/// A 4000-character chunk becomes a comparably long Chinese reply and the
+/// model streams it token by token, so a single request can legitimately run
+/// for minutes. The client's 60s default cut long chunks off mid-body with an
+/// opaque "error decoding response body"; this is the ceiling instead.
+const TRANSLATE_TIMEOUT_SECS: u64 = 300;
+
 impl TranslationBackend for HttpBackend {
     fn complete(&self, spec: &HttpRequestSpec) -> Result<String, AppError> {
-        let client = build_http_client(None, 60);
+        let client = build_http_client(None, TRANSLATE_TIMEOUT_SECS);
         let mut req = client.post(&spec.url);
         for (k, v) in &spec.headers {
             req = req.header(k.as_str(), v.as_str());
@@ -97,9 +105,13 @@ impl TranslationBackend for HttpBackend {
         let resp = req
             .json(&spec.body)
             .send()
-            .map_err(|e| AppError::network(e.to_string()))?;
+            .map_err(|e| AppError::network(format!("请求发送失败：{e}")))?;
         let status = resp.status();
-        let text = resp.text().map_err(|e| AppError::network(e.to_string()))?;
+        // Name the failure explicitly: a bare decoder error is indistinguishable
+        // from a malformed reply, and that ambiguity cost a debugging round.
+        let text = resp
+            .text()
+            .map_err(|e| AppError::network(format!("读取响应失败（可能是超时）：{e}")))?;
         if !status.is_success() {
             let snippet: String = text.chars().take(300).collect();
             return Err(AppError::network(format!("HTTP {status}: {snippet}")));
