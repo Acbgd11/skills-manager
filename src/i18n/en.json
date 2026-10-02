@@ -1220,6 +1220,9 @@
     "bodyNotTranslated": "This skill body has not been translated yet.",
     "bodyFailed": "Translation failed. Check the endpoint in Settings and try again.",
     "bodyDisclaimer": "Machine-translated body — the original file is unchanged.",
-    "viewOriginal": "View original"
+    "viewOriginal": "View original",
+    "translatingBodyChunk": "Translating body… (part {{done}}/{{total}})",
+    "bodyIncomplete": "The translation came back incomplete and was not saved. Try again.",
+    "alreadyRunning": "A translation is already running. Wait for it to finish."
   }
 }

@@ -101,6 +101,80 @@ pub fn strip_code_fence(raw: &str) -> String {
     inner.trim().to_string()
 }
 
+/// Target characters per chunk. The model's output ceiling is 8000 tokens and
+/// Chinese costs roughly one token per character, so 4000 leaves headroom for
+/// a translation that runs longer than its source.
+pub const BODY_CHUNK_CHARS: usize = 4000;
+
+/// Split a Markdown document into chunks small enough to translate without
+/// hitting the output limit.
+///
+/// Splits on blank lines — Markdown's block boundary — so a chunk always ends
+/// between blocks, never mid-paragraph. Fenced code blocks are treated as
+/// indivisible: a fence that opens is never split from its close, because a
+/// half-translated code block is worse than an oversized chunk. A single block
+/// longer than `max_chars` is emitted whole rather than cut.
+pub fn split_markdown_chunks(content: &str, max_chars: usize) -> Vec<String> {
+    if content.trim().is_empty() {
+        return Vec::new();
+    }
+    if max_chars == 0 || content.chars().count() <= max_chars {
+        return vec![content.trim().to_string()];
+    }
+
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_fence = false;
+    // Blocks are separated by blank lines; accumulate whole blocks.
+    let mut block = String::new();
+
+    let flush_block = |block: &mut String, current: &mut String, chunks: &mut Vec<String>| {
+        if block.trim().is_empty() {
+            block.clear();
+            return;
+        }
+        let would_be = current.chars().count() + if current.is_empty() { 0 } else { 2 }
+            + block.trim_end().chars().count();
+        if !current.is_empty() && would_be > max_chars {
+            chunks.push(current.trim().to_string());
+            current.clear();
+        }
+        if !current.is_empty() {
+            current.push_str("\n\n");
+        }
+        current.push_str(block.trim_end());
+        block.clear();
+    };
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        let is_fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
+        if is_fence {
+            in_fence = !in_fence;
+        }
+        // A blank line outside a fence ends the current block.
+        if line.trim().is_empty() && !in_fence {
+            flush_block(&mut block, &mut current, &mut chunks);
+            continue;
+        }
+        if !block.is_empty() {
+            block.push('\n');
+        }
+        block.push_str(line);
+    }
+    flush_block(&mut block, &mut current, &mut chunks);
+    if !current.trim().is_empty() {
+        chunks.push(current.trim().to_string());
+    }
+
+    chunks
+}
+
+/// Where a chunk sits in the whole document, for the progress message.
+pub fn chunk_count(content: &str, max_chars: usize) -> usize {
+    split_markdown_chunks(content, max_chars).len()
+}
+
 pub fn plan_batches(inputs: Vec<TranslationInput>, batch_size: usize) -> Vec<Vec<TranslationInput>> {
     if batch_size == 0 {
         return Vec::new();
@@ -363,5 +437,73 @@ mod tests {
         let prompt = build_body_prompt("# Title\n\nBody text.");
         assert!(prompt.contains("# Title\n\nBody text."));
         assert!(prompt.contains("Markdown"));
+    }
+
+    #[test]
+    fn chunker_keeps_short_documents_whole() {
+        let short = "# Title\n\nOne paragraph.";
+        assert_eq!(split_markdown_chunks(short, 4000), vec![short.to_string()]);
+        assert!(split_markdown_chunks("   ", 4000).is_empty());
+        assert!(split_markdown_chunks("", 4000).is_empty());
+    }
+
+    #[test]
+    fn chunker_splits_between_blocks_not_inside_them() {
+        // Each block ~60 chars; max 100 forces a split, but only at blank lines.
+        let content = "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee\n\n\
+                       ffffffffff gggggggggg hhhhhhhhhh iiiiiiiiii jjjjjjjjjj\n\n\
+                       kkkkkkkkkk llllllllll mmmmmmmmmm nnnnnnnnnn oooooooooo";
+        let chunks = split_markdown_chunks(content, 100);
+        assert!(chunks.len() >= 3, "expected several chunks, got {chunks:?}");
+        for c in &chunks {
+            // No chunk may start or end mid-sentence for these whole blocks.
+            assert!(!c.trim().is_empty());
+        }
+        // Reassembling restores every block in order.
+        let joined = chunks.join("\n\n");
+        for token in ["aaaaaaaaaa", "jjjjjjjjjj", "oooooooooo"] {
+            assert!(joined.contains(token), "lost {token}");
+        }
+    }
+
+    #[test]
+    fn chunker_never_splits_inside_a_fenced_code_block() {
+        // The fence is longer than the limit on its own; it must stay in one piece.
+        let code = format!("```rust\n{}\n```", "let x = 1;\n".repeat(40));
+        let content = format!("# Title\n\nbefore\n\n{code}\n\nafter");
+        let chunks = split_markdown_chunks(&content, 50);
+
+        let with_fence: Vec<_> = chunks.iter().filter(|c| c.contains("```")).collect();
+        assert_eq!(with_fence.len(), 1, "fence was split across chunks: {chunks:#?}");
+        let fenced = with_fence[0];
+        assert_eq!(fenced.matches("```").count(), 2, "fence opened without closing: {fenced}");
+        assert!(fenced.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn chunker_emits_an_oversized_block_whole() {
+        let huge = "x".repeat(500);
+        let content = format!("{huge}\n\nsmall");
+        let chunks = split_markdown_chunks(&content, 100);
+        assert!(chunks.iter().any(|c| c.chars().count() >= 500));
+    }
+
+    #[test]
+    fn chunker_handles_an_unclosed_fence() {
+        // Malformed input must still terminate and not panic.
+        let content = format!("# T\n\n```\n{}\n\nmore text here", "line\n".repeat(60));
+        let chunks = split_markdown_chunks(&content, 60);
+        assert!(!chunks.is_empty());
+        let joined = chunks.join("\n\n");
+        assert!(joined.contains("more text here"));
+    }
+
+    #[test]
+    fn chunker_chunk_count_matches_split() {
+        let content = format!("{}\n\n{}", "a".repeat(60), "b".repeat(60));
+        assert_eq!(
+            chunk_count(&content, 100),
+            split_markdown_chunks(&content, 100).len()
+        );
     }
 }

@@ -89,7 +89,10 @@ export function TranslateButton({ onDone }: { onDone?: () => void | Promise<void
       } else {
         toast.info(t("translation.noPending"));
       }
-      // Refresh the bilingual rows and the pending counter.
+      // Refresh the bilingual rows and the pending counter. The page owns this
+      // single button, so tell every list showing translated text to reload
+      // itself — the plugin section keeps its own data and has no other cue.
+      window.dispatchEvent(new CustomEvent("translations-updated"));
       await Promise.all([
         getTranslationStatus().then(setTrStatus).catch(() => {}),
         onDone ? Promise.resolve(onDone()).catch(() => {}) : Promise.resolve(),

@@ -155,7 +155,14 @@ pub async fn get_global_local_skills(
         // Fill zh_name/zh_description from the translation cache (by fingerprint).
         // Mirrors `commands::plugins::get_claude_plugin_skills` for plugin skills;
         // same kinds string ("local_skill") and same fingerprint computation.
-        let cached = store.get_translations().unwrap_or_default();
+        // Degrade to "no Chinese" on a read failure, but log it (see plugins.rs).
+        let cached = match store.get_translations() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("translation cache unreadable, showing untranslated skills: {e}");
+                Default::default()
+            }
+        };
         for skill in &mut skills {
             let Some(desc) = skill.description.as_deref() else {
                 continue;

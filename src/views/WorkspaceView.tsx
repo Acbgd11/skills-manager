@@ -20,6 +20,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { cn, compactHomePath } from "../utils";
 import { useApp } from "../context/AppContext";
@@ -367,6 +368,9 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   const [localZhDocContent, setLocalZhDocContent] = useState<string | null>(null);
   const [localZhDocLoading, setLocalZhDocLoading] = useState(false);
   const [localZhDocError, setLocalZhDocError] = useState(false);
+  const [localZhDocIncomplete, setLocalZhDocIncomplete] = useState(false);
+  // (done, total) chunk progress while a long body translates.
+  const [localZhChunk, setLocalZhChunk] = useState<{ done: number; total: number } | null>(null);
   const [uploadConfirmSkill, setUploadConfirmSkill] = useState<ProjectSkill | null>(null);
   const [pullConfirmSkill, setPullConfirmSkill] = useState<ProjectSkill | null>(null);
   const [deleteLocalConfirmSkill, setDeleteLocalConfirmSkill] = useState<ProjectSkill | null>(null);
@@ -821,6 +825,8 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       setLocalDocContent(null);
       setLocalZhDocContent(null);
       setLocalZhDocError(false);
+      setLocalZhDocIncomplete(false);
+      setLocalZhChunk(null);
       setLocalZhDocLoading(false);
       setLocalDocLoading(true);
 
@@ -847,6 +853,25 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     [currentTool]
   );
 
+  // Long bodies are translated in chunks; show which one is in flight. Scoped
+  // unlisten, same idiom as TranslateButton.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let active = true;
+    listen<{ done: number; total: number }>("body-translation-progress", (event) => {
+      if (active) setLocalZhChunk(event.payload);
+    })
+      .then((fn) => {
+        if (active) unlisten = fn;
+        else fn();
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
   // Translate the detail view's body on demand. The backend caches by content
   // hash, so re-opening the same skill costs nothing after the first run.
   const handleTranslateLocalDoc = useCallback(async () => {
@@ -854,13 +879,17 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     const requestId = localDetailRequestRef.current;
     setLocalZhDocLoading(true);
     setLocalZhDocError(false);
+    setLocalZhDocIncomplete(false);
     try {
       const zh = await api.translateSkillBody(localDocContent, localDetailSkill.relative_path);
       if (localDetailRequestRef.current !== requestId) return;
       if (zh) {
         setLocalZhDocContent(zh);
       } else {
+        // The backend returns nothing rather than caching an incomplete body,
+        // so distinguish "gave up on purpose" from a transport error.
         setLocalZhDocError(true);
+        setLocalZhDocIncomplete(true);
       }
       setLocalZhDocLoading(false);
     } catch {
@@ -1467,7 +1496,12 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         ) : localContentTab === "zh" ? (
           localZhDocLoading ? (
             <div className="mt-12 text-center text-[13px] text-muted">
-              {t("translation.translatingBody")}
+              {localZhChunk && localZhChunk.total > 1
+                ? t("translation.translatingBodyChunk", {
+                    done: Math.min(localZhChunk.done + 1, localZhChunk.total),
+                    total: localZhChunk.total,
+                  })
+                : t("translation.translatingBody")}
             </div>
           ) : localZhDocContent ? (
             <div>
@@ -1488,7 +1522,11 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           ) : (
             <div className="mt-12 flex flex-col items-center gap-3 text-center">
               <p className="text-[13px] text-muted">
-                {localZhDocError ? t("translation.bodyFailed") : t("translation.bodyNotTranslated")}
+                {localZhDocIncomplete
+                  ? t("translation.bodyIncomplete")
+                  : localZhDocError
+                    ? t("translation.bodyFailed")
+                    : t("translation.bodyNotTranslated")}
               </p>
               <button
                 type="button"

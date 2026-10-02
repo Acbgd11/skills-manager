@@ -1220,6 +1220,9 @@
     "bodyNotTranslated": "这个技能的正文还没有翻译。",
     "bodyFailed": "翻译失败。请到设置里检查翻译接口后重试。",
     "bodyDisclaimer": "机器翻译的正文 —— 原文件未改动。",
-    "viewOriginal": "看原文"
+    "viewOriginal": "看原文",
+    "translatingBodyChunk": "正在翻译正文…（第 {{done}}/{{total}} 段）",
+    "bodyIncomplete": "译文不完整，已放弃保存。请重试。",
+    "alreadyRunning": "已有翻译任务在进行，请等它跑完。"
   }
 }

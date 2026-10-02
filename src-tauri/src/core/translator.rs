@@ -139,6 +139,30 @@ pub fn extract_reply_text(body: &str) -> String {
     body.to_string()
 }
 
+/// True when the reply was cut off by the output-length limit rather than
+/// finishing on its own. OpenAI reports `finish_reason: "length"`; Anthropic
+/// reports `stop_reason: "max_tokens"`. A reply that stopped for any other
+/// reason (or that reports nothing) is treated as complete.
+///
+/// Without this check a truncated reply is indistinguishable from a complete
+/// one, and a half-translated document would be cached as if it were whole.
+pub fn reply_was_truncated(body: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    let openai = value
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("finish_reason"))
+        .and_then(|f| f.as_str());
+    if matches!(openai, Some("length")) {
+        return true;
+    }
+    let anthropic = value.get("stop_reason").and_then(|f| f.as_str());
+    matches!(anthropic, Some("max_tokens"))
+}
+
 /// Runs every batch. Each batch gets two attempts; a batch that still yields no
 /// parsed items is counted as failed and contributes nothing (no partial writes).
 pub fn run_translation(
@@ -306,6 +330,34 @@ mod tests {
     fn extract_reply_text_falls_back_to_raw_body_on_unknown_shape() {
         let body = "just plain text, no JSON";
         assert_eq!(extract_reply_text(body), body);
+    }
+
+    #[test]
+    fn detects_openai_length_finish_reason() {
+        let body = r#"{"choices":[{"finish_reason":"length","message":{"content":"半篇"}}]}"#;
+        assert!(reply_was_truncated(body));
+    }
+
+    #[test]
+    fn detects_anthropic_max_tokens_stop_reason() {
+        let body = r#"{"stop_reason":"max_tokens","content":[{"type":"text","text":"半篇"}]}"#;
+        assert!(reply_was_truncated(body));
+    }
+
+    #[test]
+    fn complete_replies_are_not_flagged_as_truncated() {
+        let openai = r#"{"choices":[{"finish_reason":"stop","message":{"content":"完整"}}]}"#;
+        assert!(!reply_was_truncated(openai));
+        let anthropic = r#"{"stop_reason":"end_turn","content":[{"type":"text","text":"完整"}]}"#;
+        assert!(!reply_was_truncated(anthropic));
+    }
+
+    #[test]
+    fn unknown_or_missing_finish_reason_is_treated_as_complete() {
+        // Fail open: an unrecognised shape must not block an otherwise good
+        // translation, since the chunker already bounds each request.
+        assert!(!reply_was_truncated("not json at all"));
+        assert!(!reply_was_truncated(r#"{"foo":"bar"}"#));
     }
 
     #[test]

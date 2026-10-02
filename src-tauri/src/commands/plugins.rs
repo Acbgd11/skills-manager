@@ -51,7 +51,16 @@ pub async fn get_claude_plugin_skills(
         let mut official = plugin_scanner::scan_official_skills(&config_dir);
 
         // Fill zh_name/zh_description from the translation cache (by fingerprint).
-        let cached = store.get_translations().unwrap_or_default();
+        // A cache read failure degrades to "no Chinese" rather than failing the
+        // whole listing, but it is logged — silently showing untranslated text
+        // looks identical to "never translated".
+        let cached = match store.get_translations() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("translation cache unreadable, showing untranslated list: {e}");
+                Default::default()
+            }
+        };
         for group in &mut groups {
             if let Some(d) = group.description.as_deref() {
                 let fp = translation_store::fingerprint("plugin_group", &group.plugin, Some(d));

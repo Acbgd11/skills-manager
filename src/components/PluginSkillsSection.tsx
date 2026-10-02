@@ -15,7 +15,6 @@ import {
 import { cn } from "../utils";
 import { DetailSheet } from "./DetailSheet";
 import { SkillMarkdown } from "./SkillMarkdown";
-import { TranslateButton } from "./TranslateButton";
 import {
   getClaudePluginSkills,
   getPluginSkillDocument,
@@ -83,16 +82,33 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
     };
   }, [agentKey, load]);
 
+  // The page-level translate button reloads its own lists; this section holds
+  // separate data, so it needs the same cue to pick up fresh Chinese rows.
+  useEffect(() => {
+    if (agentKey !== "claude_code") return;
+    const onUpdated = () => void load();
+    window.addEventListener("translations-updated", onUpdated);
+    return () => window.removeEventListener("translations-updated", onUpdated);
+  }, [agentKey, load]);
+
   // F4: filter by query across name, description, and plugin (group name).
+  // The translated Chinese name/description are matched too — they are what the
+  // card actually shows once translated, so searching for them has to work.
   // When a query is active, matching entries auto-expand their containing group.
   const normalizedQuery = query.trim().toLowerCase();
   const matches = useCallback(
     (entry: PluginSkillEntry, group?: PluginSkillGroup) => {
       if (!normalizedQuery) return true;
-      if (entry.name.toLowerCase().includes(normalizedQuery)) return true;
-      if (entry.description?.toLowerCase().includes(normalizedQuery)) return true;
-      if (group?.plugin.toLowerCase().includes(normalizedQuery)) return true;
-      return false;
+      const haystack = [
+        entry.name,
+        entry.description ?? "",
+        entry.zh_name ?? "",
+        entry.zh_description ?? "",
+        group?.plugin ?? "",
+        group?.zh_name ?? "",
+        group?.zh_description ?? "",
+      ];
+      return haystack.some((field) => field.toLowerCase().includes(normalizedQuery));
     },
     [normalizedQuery]
   );
@@ -109,7 +125,13 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
         ...g,
         skills: g.skills.filter((e) => matches(e, g)),
       }))
-      .filter((g) => g.skills.length > 0 || g.plugin.toLowerCase().includes(normalizedQuery));
+      .filter(
+        (g) =>
+          g.skills.length > 0 ||
+          g.plugin.toLowerCase().includes(normalizedQuery) ||
+          (g.zh_name ?? "").toLowerCase().includes(normalizedQuery) ||
+          (g.zh_description ?? "").toLowerCase().includes(normalizedQuery)
+      );
   }, [data, matches, normalizedQuery]);
 
   // When query is non-empty, auto-expand all groups that have matching skills.
@@ -284,7 +306,9 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
           <Package className="h-4 w-4 text-muted" />
           {t("pluginSkills.title")}
         </h2>
-        <TranslateButton onDone={load} />
+        {/* Translation is a page-level action: WorkspaceView's toolbar owns the
+            single button. A second copy here sat next to it and let both start
+            the same job. */}
       </div>
 
       {!hasAnything && !normalizedQuery ? (
