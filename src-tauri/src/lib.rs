@@ -868,6 +868,76 @@ pub fn run() {
             );
             startup_timings.log();
 
+            // Shrink the window to fit the screen it opens on.
+            //
+            // The configured 1440x860 is a *logical* size, but the screen's
+            // usable area is physical. At 125% display scaling that request
+            // needs 1075 physical px, so on a 816px-tall screen the window
+            // opens taller than the display and its bottom edge — where the
+            // sidebar's Settings entry sits — is off-screen until the user
+            // maximizes. Size the window against the real work area instead.
+            if let Some(window) = app.get_webview_window("main") {
+                // current_monitor() is unreliable before the window is shown, so
+                // fall back to any attached monitor.
+                let monitor = window
+                    .current_monitor()
+                    .ok()
+                    .flatten()
+                    .or_else(|| window.primary_monitor().ok().flatten())
+                    .or_else(|| window.available_monitors().ok().and_then(|m| m.into_iter().next()));
+                match monitor {
+                    Some(monitor) => {
+                        let scale = monitor.scale_factor();
+                        let work = monitor.work_area().size.to_logical::<f64>(scale);
+                        // `set_size` sets the *inner* (client) size, so the
+                        // frame eats into the budget: shrink by the difference
+                        // between the outer and inner sizes we start with.
+                        let outer = window
+                            .outer_size()
+                            .map(|s| s.to_logical::<f64>(scale))
+                            .unwrap_or(tauri::LogicalSize::new(1440.0, 860.0));
+                        let inner = window
+                            .inner_size()
+                            .map(|s| s.to_logical::<f64>(scale))
+                            .unwrap_or(outer);
+                        let frame_w = (outer.width - inner.width).max(0.0);
+                        let frame_h = (outer.height - inner.height).max(0.0);
+                        let max_inner_h = (work.height - frame_h).max(320.0);
+                        let max_inner_w = (work.width - frame_w).max(320.0);
+                        let mut target = inner;
+                        if target.height > max_inner_h {
+                            target.height = max_inner_h;
+                        }
+                        if target.width > max_inner_w {
+                            target.width = max_inner_w;
+                        }
+                        log::info!(
+                            "window fit: scale={scale} work={}x{} frame={}x{} inner={}x{} -> set {}x{}",
+                            work.width,
+                            work.height,
+                            frame_w,
+                            frame_h,
+                            inner.width,
+                            inner.height,
+                            target.width,
+                            target.height
+                        );
+                        if (target.height - inner.height).abs() > 1.0
+                            || (target.width - inner.width).abs() > 1.0
+                        {
+                            let _ = window.set_size(tauri::LogicalSize::new(target.width, target.height));
+                        }
+                        // Center inside the *work* area (which excludes the
+                        // taskbar) rather than the full screen, so the title bar
+                        // and the window's bottom edge both stay visible.
+                        let _ = window.center();
+                    }
+                    None => log::warn!("window fit: no monitor reported; leaving size as configured"),
+                }
+            } else {
+                log::warn!("window fit: no window labelled 'main'");
+            }
+
             // Flush any errors stashed while resolving the central repo — that
             // ran before this logger existed, so its own log calls were no-ops
             // (e.g. a central-library migration that fell back to the source).
