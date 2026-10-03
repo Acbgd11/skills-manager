@@ -1185,7 +1185,9 @@
     "loading": "正在扫描插件…",
     "loadError": "加载插件技能列表失败",
     "searchPlaceholder": "搜索技能…",
-    "documentError": "无法读取该技能文档"
+    "documentError": "无法读取该技能文档",
+    "noRepo": "无 GitHub",
+    "noRepoHint": "这一项没有关联的 GitHub 仓库"
   },
   "translation": {
     "translate": "一键翻译",

@@ -16,6 +16,8 @@ use crate::core::translation_store;
 pub struct PluginSkillsDto {
     pub groups: Vec<plugin_scanner::PluginSkillGroup>,
     pub official: Vec<plugin_scanner::PluginSkillEntry>,
+    /// GitHub URL of the marketplace the official skills come from, when known.
+    pub official_repository: Option<String>,
     pub config_dir: String,
 }
 
@@ -90,6 +92,7 @@ pub async fn get_claude_plugin_skills(
         Ok(PluginSkillsDto {
             groups,
             official,
+            official_repository: plugin_scanner::official_skills_repo(&config_dir),
             config_dir: config_dir.to_string_lossy().to_string(),
         })
     })

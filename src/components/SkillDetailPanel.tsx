@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { cn } from "../utils";
+import { cn, skillGithubUrl } from "../utils";
 import {
   getSkillDocument,
   getSourceSkillDocument,
@@ -23,6 +23,7 @@ import {
   type SkillToolToggle,
   type ToolInfo,
 } from "../lib/tauri";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { SkillSourceDiffViewer } from "./SkillSourceDiffViewer";
 import { DetailSheet } from "./DetailSheet";
 import { SkillMarkdown } from "./SkillMarkdown";
@@ -199,6 +200,8 @@ function SkillDetailPanelContent({
     }
   };
 
+  const githubUrl = skillGithubUrl(skill);
+
   const sourceTypeLabel = (type: string) => (type === "skillssh" ? "skills.sh" : type);
 
   const metadataItems = [
@@ -265,6 +268,26 @@ function SkillDetailPanelContent({
           <FolderOpen className="h-3.5 w-3.5" />
           {t("common.openFolder")}
         </button>
+        {/* A local/import skill has no remote, so say so rather than leaving a
+            blank where a link would otherwise be. */}
+        {githubUrl ? (
+          <button
+            type="button"
+            onClick={() => {
+              void openUrl(githubUrl).catch(() => {});
+            }}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
+            title={githubUrl}
+            aria-label={t("pluginSkills.openRepo")}
+          >
+            <Github className="h-3.5 w-3.5" />
+            {t("pluginSkills.openRepo")}
+          </button>
+        ) : (
+          <span className="shrink-0 px-1.5 py-0.5 text-[12px] text-faint">
+            {t("pluginSkills.noRepo")}
+          </span>
+        )}
       </div>
       {metadataItems.length > 0 && (
         <div className="mt-4 rounded-xl border border-border-subtle bg-surface/70">

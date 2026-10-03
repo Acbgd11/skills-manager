@@ -95,6 +95,9 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
   // The translated Chinese name/description are matched too — they are what the
   // card actually shows once translated, so searching for them has to work.
   // When a query is active, matching entries auto-expand their containing group.
+  /// Official skills all ship from one marketplace repo, so they share a link.
+  const officialRepoUrl = data?.official_repository ?? null;
+
   const normalizedQuery = query.trim().toLowerCase();
   const matches = useCallback(
     (entry: PluginSkillEntry, group?: PluginSkillGroup) => {
@@ -209,7 +212,32 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
     </button>
   );
 
-  const renderOfficialRow = (entry: PluginSkillEntry) => (
+  /** GitHub link, or a plain "no GitHub" note when there is none to open. */
+  const RepoLinkCell = ({ repoUrl }: { repoUrl: string | null }) =>
+    repoUrl ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          void openUrl(repoUrl).catch(() => {});
+        }}
+        className="mt-0.5 inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[12px] text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
+        title={repoUrl}
+        aria-label={t("pluginSkills.openRepo")}
+      >
+        <ExternalLink className="h-3 w-3" />
+        GitHub
+      </button>
+    ) : (
+      <span
+        className="mt-0.5 shrink-0 px-1.5 py-0.5 text-[12px] text-faint"
+        title={t("pluginSkills.noRepoHint")}
+      >
+        {t("pluginSkills.noRepo")}
+      </span>
+    );
+
+  const renderOfficialRow = (entry: PluginSkillEntry, repoUrl: string | null) => (
     <div
       key={`official:${entry.relative_path}`}
       role="button"
@@ -243,10 +271,13 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
         ) : null}
       </span>
       {revealFolderButton(entry)}
+      <RepoLinkCell repoUrl={repoUrl} />
     </div>
   );
 
-  const renderPluginRow = (entry: PluginSkillEntry) => (
+  // A skill inside a plugin has no repository of its own — it ships with the
+  // plugin, so it links to the same repo / shows the same "no GitHub" note.
+  const renderPluginRow = (entry: PluginSkillEntry, repoUrl: string | null) => (
     <div
       key={`plugin:${entry.relative_path}`}
       role="button"
@@ -279,6 +310,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
         ) : null}
       </span>
       {revealFolderButton(entry)}
+      <RepoLinkCell repoUrl={repoUrl} />
     </div>
   );
 
@@ -347,7 +379,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
               </div>
               {showOfficial ? (
                 <div className="flex flex-col pb-1">
-                  {filteredOfficial.map(renderOfficialRow)}
+                  {filteredOfficial.map((entry) => renderOfficialRow(entry, officialRepoUrl))}
                 </div>
               ) : null}
             </div>
@@ -436,11 +468,15 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
                               <ExternalLink className="h-3 w-3" />
                               {t("pluginSkills.openRepo")}
                             </button>
-                          ) : null}
+                          ) : (
+                            <span className="shrink-0 px-2 py-1 text-[12px] text-faint">
+                              {t("pluginSkills.noRepo")}
+                            </span>
+                          )}
                         </div>
                         {isExpanded && group.skills.length > 0 ? (
                           <div className="flex flex-col pb-1">
-                            {group.skills.map(renderPluginRow)}
+                            {group.skills.map((entry) => renderPluginRow(entry, repoUrl))}
                           </div>
                         ) : null}
                       </div>

@@ -212,6 +212,46 @@ fn read_plugin_manifest(
     (s("description"), s("homepage"), s("repository"), author)
 }
 
+/// Repository URLs for each marketplace, read from
+/// `plugins/known_marketplaces.json` (`{"<name>": {"source": {"source":
+/// "github", "repo": "owner/name"}}}`), as `marketplace name -> https URL`.
+///
+/// A plugin's own `plugin.json` often carries no `repository`, so without this
+/// most installed plugins have no link to offer even though the marketplace
+/// they came from is a GitHub repo the user can visit.
+fn read_marketplace_repos(config_dir: &Path) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let path = config_dir.join("plugins").join("known_marketplaces.json");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return out;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return out;
+    };
+    let Some(map) = json.as_object() else {
+        return out;
+    };
+    for (name, entry) in map {
+        let source = entry.get("source");
+        // Only github sources map to a URL we can build.
+        let is_github = source
+            .and_then(|s| s.get("source"))
+            .and_then(|v| v.as_str())
+            == Some("github");
+        if !is_github {
+            continue;
+        }
+        if let Some(repo) = source
+            .and_then(|s| s.get("repo"))
+            .and_then(|v| v.as_str())
+            .filter(|r| !r.trim().is_empty())
+        {
+            out.insert(name.clone(), format!("https://github.com/{}", repo.trim()));
+        }
+    }
+    out
+}
+
 /// Recursively discover skills under `skills_root`, bounded to `max_depth`
 /// levels below the root. A directory that is itself a valid skill dir
 /// (contains SKILL.md/skill.md) is recorded as a skill and **not** descended
@@ -278,6 +318,7 @@ fn collect_skills_recursive(
 
 pub fn scan_plugin_skills(config_dir: &Path) -> Vec<PluginSkillGroup> {
     let installed = read_installed_plugins(config_dir);
+    let market_repos = read_marketplace_repos(config_dir);
     let cache_root = config_dir.join("plugins").join("cache");
     let mut groups = Vec::new();
     let Ok(markets) = fs::read_dir(&cache_root) else {
@@ -333,6 +374,11 @@ pub fn scan_plugin_skills(config_dir: &Path) -> Vec<PluginSkillGroup> {
                 continue;
             };
             let (description, homepage, repository, author) = read_plugin_manifest(&version_dir);
+            // Most plugins declare no repository of their own, so fall back to
+            // the marketplace's GitHub repo — derived from the marketplace name
+            // to stay correct wherever this group is later copied or cached.
+            let repository = repository
+                .or_else(|| market_repos.get(&market_name).cloned());
             groups.push(PluginSkillGroup {
                 marketplace: market_name.clone(),
                 plugin: plugin_name,
@@ -355,13 +401,26 @@ pub fn scan_plugin_skills(config_dir: &Path) -> Vec<PluginSkillGroup> {
     groups
 }
 
+/// The marketplace that owns the "official skills" section.
+const OFFICIAL_MARKETPLACE: &str = "anthropic-agent-skills";
+
 pub fn scan_official_skills(config_dir: &Path) -> Vec<PluginSkillEntry> {
     let root = config_dir
         .join("plugins")
         .join("marketplaces")
-        .join("anthropic-agent-skills")
+        .join(OFFICIAL_MARKETPLACE)
         .join("skills");
-    skills_under(&root, Path::new("marketplaces/anthropic-agent-skills/skills"))
+    skills_under(
+        &root,
+        Path::new("marketplaces/anthropic-agent-skills/skills"),
+    )
+}
+
+/// GitHub URL for the official skills' marketplace, if it declares one.
+pub fn official_skills_repo(config_dir: &Path) -> Option<String> {
+    read_marketplace_repos(config_dir)
+        .get(OFFICIAL_MARKETPLACE)
+        .cloned()
 }
 
 #[cfg(test)]
@@ -411,6 +470,73 @@ mod tests {
         assert_eq!(g.repository.as_deref(), Some("https://github.com/obra/superpowers"));
         assert_eq!(g.skills.len(), 1, "only newest version dir is scanned");
         assert_eq!(g.skills[0].name, "brainstorming");
+    }
+
+    #[test]
+    fn falls_back_to_the_marketplace_repo_when_plugin_declares_none() {
+        // Most installed plugins carry no `repository` in their manifest, so
+        // without this fallback the UI has no link to offer for them.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let dir = root.join("plugins/cache/claude-plugins-official/code-review/abc123");
+        write_skill(&dir.join("skills"), "review", "Reviews code");
+        fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        fs::write(
+            dir.join(".claude-plugin/plugin.json"),
+            r#"{"name":"code-review","description":"Reviews","author":{"name":"Anthropic"}}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("plugins")).unwrap();
+        fs::write(
+            root.join("plugins/known_marketplaces.json"),
+            r#"{"claude-plugins-official":{"source":{"source":"github","repo":"anthropics/claude-plugins-official"},"installLocation":"/x"}}"#,
+        )
+        .unwrap();
+
+        let groups = scan_plugin_skills(root);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].repository.as_deref(),
+            Some("https://github.com/anthropics/claude-plugins-official")
+        );
+    }
+
+    #[test]
+    fn a_plugins_own_repository_wins_over_the_marketplace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let dir = root.join("plugins/cache/claude-plugins-official/superpowers/6.4.1");
+        write_skill(&dir.join("skills"), "brainstorming", "Design first");
+        fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        fs::write(
+            dir.join(".claude-plugin/plugin.json"),
+            r#"{"name":"superpowers","repository":"https://github.com/obra/superpowers"}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("plugins")).unwrap();
+        fs::write(
+            root.join("plugins/known_marketplaces.json"),
+            r#"{"claude-plugins-official":{"source":{"source":"github","repo":"anthropics/claude-plugins-official"}}}"#,
+        )
+        .unwrap();
+
+        let groups = scan_plugin_skills(root);
+        assert_eq!(
+            groups[0].repository.as_deref(),
+            Some("https://github.com/obra/superpowers")
+        );
+    }
+
+    #[test]
+    fn no_repository_is_left_empty_when_nothing_declares_one() {
+        // The UI decides between a link and a "no GitHub" note from this being
+        // None, so a missing marketplace entry must not invent a URL.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_skill(&root.join("plugins/cache/local-market/plain/1.0.0/skills"), "s", "d");
+        let groups = scan_plugin_skills(root);
+        assert_eq!(groups[0].repository, None);
+        assert_eq!(groups[0].homepage, None);
     }
 
     #[test]

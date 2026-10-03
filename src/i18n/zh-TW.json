@@ -1110,7 +1110,9 @@
     "loading": "正在掃描外掛…",
     "loadError": "載入外掛技能清單失敗",
     "searchPlaceholder": "搜尋技能…",
-    "documentError": "無法讀取該技能文件"
+    "documentError": "無法讀取該技能文件",
+    "noRepo": "無 GitHub",
+    "noRepoHint": "這一項沒有關聯的 GitHub 倉庫"
   },
   "translation": {
     "translate": "一鍵翻譯",

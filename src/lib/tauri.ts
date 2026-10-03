@@ -903,6 +903,8 @@ export interface PluginSkillGroup {
 export interface PluginSkillsDto {
   groups: PluginSkillGroup[];
   official: PluginSkillEntry[];
+  /** GitHub URL of the marketplace the official skills come from, when known. */
+  official_repository: string | null;
   config_dir: string;
 }
 

@@ -1185,7 +1185,9 @@
     "loading": "Scanning plugins…",
     "loadError": "Failed to load plugin skills",
     "searchPlaceholder": "Search skills…",
-    "documentError": "Unable to read this skill document"
+    "documentError": "Unable to read this skill document",
+    "noRepo": "No GitHub",
+    "noRepoHint": "This item has no GitHub repository associated with it"
   },
   "translation": {
     "translate": "Translate",

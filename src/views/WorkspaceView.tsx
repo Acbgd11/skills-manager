@@ -5,6 +5,7 @@ import {
   Download,
   FileText,
   FolderOpen,
+  Github,
   Globe,
   LayoutGrid,
   List,
@@ -21,8 +22,9 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
-import { cn, compactHomePath } from "../utils";
+import { cn, compactHomePath, skillGithubUrl } from "../utils";
 import { useApp } from "../context/AppContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PresetBar } from "../components/PresetBar";
@@ -875,6 +877,16 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
 
   // Translate the detail view's body on demand. The backend caches by content
   // hash, so re-opening the same skill costs nothing after the first run.
+  // An agent's local skill has no remote of its own, so take the link from the
+  // library record it is synced with (`center_skill_id`). Skills that exist
+  // only in the agent's directory have none.
+  const localDetailGithubUrl = useMemo(() => {
+    const centerId = localDetailSkill?.center_skill_id;
+    if (!centerId) return null;
+    const managed = managedSkills.find((s) => s.id === centerId);
+    return managed ? skillGithubUrl(managed) : null;
+  }, [localDetailSkill, managedSkills]);
+
   const handleTranslateLocalDoc = useCallback(async () => {
     if (!localDetailSkill || !localDocContent || localZhDocLoading) return;
     const requestId = localDetailRequestRef.current;
@@ -1446,6 +1458,26 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                   <FolderOpen className="h-3 w-3" />
                   {t("common.openFolder")}
                 </button>
+                {/* The agent's copy carries no remote of its own; borrow the
+                    library record's when this skill is in the center, else say
+                    there is none. */}
+                {localDetailGithubUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void openUrl(localDetailGithubUrl).catch(() => {});
+                    }}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
+                    title={localDetailGithubUrl}
+                  >
+                    <Github className="h-3 w-3" />
+                    {t("pluginSkills.openRepo")}
+                  </button>
+                ) : (
+                  <span className="shrink-0 px-2 py-1 text-[12px] text-faint">
+                    {t("pluginSkills.noRepo")}
+                  </span>
+                )}
               </div>
               {localDetailSkill.zh_name ? (
                 <p className="text-[13px] text-secondary">
