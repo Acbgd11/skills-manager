@@ -3,7 +3,6 @@ import { useParams, useNavigate, Navigate } from "react-router-dom";
 import {
   ChevronRight,
   Download,
-  ExternalLink,
   FileText,
   FolderOpen,
   Globe,
@@ -21,9 +20,8 @@ import {
   Upload,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
-import { cn, compactHomePath, skillGithubUrl, sourceSiteName } from "../utils";
+import { cn, compactHomePath, skillGithubUrl } from "../utils";
 import { useApp } from "../context/AppContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PresetBar } from "../components/PresetBar";
@@ -847,6 +845,17 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     return managed ? skillGithubUrl(managed) : null;
   }, [localDetailSkill, managedSkills]);
 
+  // Stable key for a skill's source record. The library id is preferred (it
+  // survives the folder being renamed); a skill that is not in the library is
+  // keyed by which agent it belongs to plus its path within that agent, which
+  // is the same identity the document commands use.
+  const localDetailSourceKey = useMemo(() => {
+    if (!localDetailSkill) return "";
+    if (localDetailSkill.center_skill_id) return localDetailSkill.center_skill_id;
+    const agent = localDetailSkill.agent || currentToolKey || "unknown";
+    return `local:${agent}:${localDetailSkill.relative_path}`;
+  }, [localDetailSkill, currentToolKey]);
+
   const existsInGlobal = useCallback(
     (skill: ManagedSkill, agentK: string) =>
       skill.targets.some((target) => target.tool === agentK),
@@ -1374,33 +1383,15 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         meta={
           localDetailSkill ? (
             <div className="flex flex-col gap-2">
-              {/* Provenance is recorded against the library record when this
-                  skill has one; a skill that lives only in the agent's folder
-                  cannot be keyed, so it falls back to whatever its file says. */}
-              {localDetailSkill.center_skill_id ? (
-                <SkillSourceRow
-                  skillId={localDetailSkill.center_skill_id}
-                  fallbackUrl={localDetailGithubUrl}
-                  className="justify-end"
-                />
-              ) : localDetailGithubUrl ? (
-                <div className="flex flex-wrap items-center justify-end gap-2 text-[12px]">
-                  <span className="text-[12px] font-medium text-muted">
-                    {t("skillSource.label")}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void openUrl(localDetailGithubUrl).catch(() => {});
-                    }}
-                    title={localDetailGithubUrl}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-accent-border bg-accent-bg px-3 py-1 text-[12px] font-semibold text-accent outline-none transition-colors hover:border-accent focus-visible:ring-2 focus-visible:ring-border"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    {sourceSiteName(localDetailGithubUrl)}
-                  </button>
-                </div>
-              ) : null}
+              {/* Provenance is keyed by the library record when this skill is
+                  in the library, and by agent+path when it lives only in the
+                  agent's folder — a skill that was never imported still needs
+                  somewhere to record where it came from. */}
+              <SkillSourceRow
+                skillId={localDetailSourceKey}
+                fallbackUrl={localDetailGithubUrl}
+                className="justify-end"
+              />
               <div className="flex flex-wrap items-center gap-2">
                 <span className={cn("rounded-full px-2.5 py-1 text-[12px] font-medium", getLocalStatusMeta(t, localDetailSkill.sync_status).className)}>
                   {getLocalStatusMeta(t, localDetailSkill.sync_status).label}
@@ -1469,7 +1460,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
         ) : localContentTab === "zh" ? (
           <SkillBodyZh
-            skillId={localDetailSkill?.center_skill_id ?? localDetailSkill?.relative_path ?? ""}
+            skillId={localDetailSourceKey}
             content={localDocContent}
             onShowOriginal={() => setLocalContentTab("local")}
           />

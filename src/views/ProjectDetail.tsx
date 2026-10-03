@@ -1618,13 +1618,12 @@ function ProjectSkillDetailPanel({
     <>
       {/* Where this skill came from, pushed right so it reads as a badge. A
           project skill can map to several library records; the first is used
-          as the one the note is stored against. */}
-      {skill.centerSkillIds.length > 0 ? (
-        <SkillSourceRow
-          skillId={skill.centerSkillIds[0]}
-          className="mb-3 justify-end"
-        />
-      ) : null}
+          as the one the note is stored against. A skill that is only in the
+          project is keyed by agent+path so it can still be recorded. */}
+      <SkillSourceRow
+        skillId={skill.centerSkillIds[0] ?? `local:${skill.primaryVariant.agent}:${skill.relative_path}`}
+        className="mb-3 justify-end"
+      />
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
         <ProjectAgentDots
           assignedAgents={getAssignedAgents(skill.variants)}
