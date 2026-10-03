@@ -12,7 +12,7 @@ import {
   Search,
   ShieldCheck,
 } from "lucide-react";
-import { cn } from "../utils";
+import { cn, sourceSiteName } from "../utils";
 import { DetailSheet } from "./DetailSheet";
 import { SkillMarkdown } from "./SkillMarkdown";
 import {
@@ -35,6 +35,8 @@ interface DocState {
   name: string;
   content: string | null;
   error: boolean;
+  /** GitHub URL of the plugin this skill ships with, when the plugin has one. */
+  repoUrl: string | null;
 }
 
 const BADGE_READONLY = "bg-amber-500/10 text-amber-700 dark:text-amber-300";
@@ -55,6 +57,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
     name: "",
     content: null,
     error: false,
+    repoUrl: null,
   });
 
   const requestRef = useRef(0);
@@ -169,8 +172,15 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
 
   const hasAnything = filteredGroups.length > 0 || filteredOfficial.length > 0;
 
-  const openDoc = (entry: PluginSkillEntry) => {
-    setDoc({ open: true, path: entry.relative_path, name: entry.name, content: null, error: false });
+  const openDoc = (entry: PluginSkillEntry, repoUrl: string | null = null) => {
+    setDoc({
+      open: true,
+      path: entry.relative_path,
+      name: entry.name,
+      content: null,
+      error: false,
+      repoUrl,
+    });
     getPluginSkillDocument(entry.relative_path)
       .then((res) => {
         setDoc((prev) =>
@@ -189,7 +199,7 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
   };
 
   const closeDoc = () =>
-    setDoc({ open: false, path: "", name: "", content: null, error: false });
+    setDoc({ open: false, path: "", name: "", content: null, error: false, repoUrl: null });
 
   const toggleGroup = (key: string) =>
     setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -242,11 +252,11 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
       key={`official:${entry.relative_path}`}
       role="button"
       tabIndex={0}
-      onClick={() => openDoc(entry)}
+      onClick={() => openDoc(entry, repoUrl)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          openDoc(entry);
+          openDoc(entry, repoUrl);
         }
       }}
       className="flex w-full cursor-pointer items-start gap-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-hover outline-none focus-visible:ring-2 focus-visible:ring-border"
@@ -282,11 +292,11 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
       key={`plugin:${entry.relative_path}`}
       role="button"
       tabIndex={0}
-      onClick={() => openDoc(entry)}
+      onClick={() => openDoc(entry, repoUrl)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          openDoc(entry);
+          openDoc(entry, repoUrl);
         }
       }}
       className="flex w-full cursor-pointer items-start gap-2 rounded-md px-3 py-2 pl-9 text-left transition-colors hover:bg-surface-hover outline-none focus-visible:ring-2 focus-visible:ring-border"
@@ -493,6 +503,28 @@ export function PluginSkillsSection({ agentKey }: PluginSkillsSectionProps) {
         open={doc.open}
         title={doc.name}
         onClose={closeDoc}
+        meta={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className="text-[12px] font-medium text-muted">
+              {t("skillSource.label")}
+            </span>
+            {doc.repoUrl ? (
+              <button
+                type="button"
+                onClick={() => void openUrl(doc.repoUrl!).catch(() => {})}
+                title={doc.repoUrl}
+                className="inline-flex items-center gap-1.5 rounded-full border border-accent-border bg-accent-bg px-3 py-1 text-[12px] font-semibold text-accent outline-none transition-colors hover:border-accent focus-visible:ring-2 focus-visible:ring-border"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                {sourceSiteName(doc.repoUrl)}
+              </button>
+            ) : (
+              <span className="rounded-full border border-dashed border-border-subtle px-3 py-1 text-[12px] text-faint">
+                {t("skillSource.none")}
+              </span>
+            )}
+          </div>
+        }
       >
         {doc.error ? (
           <p className="text-[13px] text-muted">

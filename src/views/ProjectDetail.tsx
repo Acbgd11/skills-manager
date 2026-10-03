@@ -30,6 +30,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import { BatchTagDialog } from "../components/BatchTagDialog";
 import { DetailSheet } from "../components/DetailSheet";
+import { SkillSourceRow } from "../components/SkillSourceRow";
 import { AgentToggleSection, type AgentToggleItem } from "../components/AgentToggleSection";
 import { ToggleSwitch } from "../components/ToggleSwitch";
 import { ProjectAgentDots } from "../components/ProjectAgentDots";
@@ -1637,6 +1638,15 @@ function ProjectSkillDetailPanel({
   });
   const meta = (
     <>
+      {/* Where this skill came from, pushed right so it reads as a badge. A
+          project skill can map to several library records; the first is used
+          as the one the note is stored against. */}
+      {skill.centerSkillIds.length > 0 ? (
+        <SkillSourceRow
+          skillId={skill.centerSkillIds[0]}
+          className="mb-3 justify-end"
+        />
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
         <ProjectAgentDots
           assignedAgents={getAssignedAgents(skill.variants)}
