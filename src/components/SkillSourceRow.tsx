@@ -19,11 +19,13 @@ import { cn } from "../utils";
 export function SkillSourceRow({
   skillId,
   fallbackUrl,
+  className,
 }: {
   skillId: string;
   /** A source already known from the skill's own file, used when the user has
    *  not recorded one. Shown as a link, not as an editable value. */
   fallbackUrl?: string | null;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const [url, setUrl] = useState<string | null>(null);
@@ -80,27 +82,36 @@ export function SkillSourceRow({
 
   if (editing) {
     return (
-      <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-border-subtle bg-bg-secondary p-2.5">
-        <label className="text-[12px] text-muted">{t("skillSource.urlLabel")}</label>
+      <div
+        className={cn(
+          "flex flex-col gap-1.5 rounded-lg border border-accent-border bg-surface p-3 shadow-sm",
+          className
+        )}
+      >
+        <label className="text-[12px] font-medium text-secondary">
+          {t("skillSource.urlLabel")}
+        </label>
         <input
           value={draftUrl}
           onChange={(e) => setDraftUrl(e.target.value)}
           placeholder={t("skillSource.urlPlaceholder")}
-          className="rounded border border-border-subtle bg-surface px-2 py-1 text-[12px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-border"
+          className="rounded border border-border-subtle bg-bg-secondary px-2 py-1.5 text-[12px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-border"
         />
-        <label className="mt-1 text-[12px] text-muted">{t("skillSource.noteLabel")}</label>
+        <label className="mt-1 text-[12px] font-medium text-secondary">
+          {t("skillSource.noteLabel")}
+        </label>
         <input
           value={draftNote}
           onChange={(e) => setDraftNote(e.target.value)}
           placeholder={t("skillSource.notePlaceholder")}
-          className="rounded border border-border-subtle bg-surface px-2 py-1 text-[12px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-border"
+          className="rounded border border-border-subtle bg-bg-secondary px-2 py-1.5 text-[12px] text-primary outline-none focus-visible:ring-2 focus-visible:ring-border"
         />
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1.5 flex items-center gap-2">
           <button
             type="button"
             onClick={() => void save()}
             disabled={saving}
-            className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 text-[12px] text-white outline-none disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white outline-none transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             <Check className="h-3 w-3" />
             {t("common.save")}
@@ -108,7 +119,7 @@ export function SkillSourceRow({
           <button
             type="button"
             onClick={() => setEditing(false)}
-            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12px] text-muted outline-none hover:text-secondary"
+            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[12px] text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary"
           >
             <X className="h-3 w-3" />
             {t("common.cancel")}
@@ -119,29 +130,36 @@ export function SkillSourceRow({
   }
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
-      <span className="text-muted">{t("skillSource.label")}</span>
+    <div className={cn("flex flex-wrap items-center gap-2", className)}>
+      <span className="text-[12px] font-medium text-muted">
+        {t("skillSource.label")}
+      </span>
       {effectiveUrl ? (
         <button
           type="button"
           onClick={() => void openUrl(effectiveUrl).catch(() => {})}
           title={effectiveUrl}
           className={cn(
-            "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-muted outline-none transition-colors",
-            "hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
+            "inline-flex items-center gap-1.5 rounded-full border border-accent-border bg-accent-bg",
+            "px-3 py-1 text-[12px] font-semibold text-accent outline-none transition-colors",
+            "hover:bg-accent/20 focus-visible:ring-2 focus-visible:ring-border"
           )}
         >
-          <ExternalLink className="h-3 w-3" />
+          <ExternalLink className="h-3.5 w-3.5" />
           {sourceSiteName(effectiveUrl)}
         </button>
       ) : (
-        <span className="px-1.5 py-0.5 text-faint">{t("skillSource.none")}</span>
+        <span className="rounded-full border border-dashed border-border-subtle px-3 py-1 text-[12px] text-faint">
+          {t("skillSource.none")}
+        </span>
       )}
-      {note ? <span className="text-faint">{note}</span> : null}
+      {note ? (
+        <span className="text-[12px] italic text-secondary">{note}</span>
+      ) : null}
       <button
         type="button"
         onClick={beginEdit}
-        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
       >
         <Pencil className="h-3 w-3" />
         {t("skillSource.edit")}

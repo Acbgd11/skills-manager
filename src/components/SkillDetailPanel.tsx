@@ -233,6 +233,13 @@ function SkillDetailPanelContent({
 
   const meta = (
     <>
+      {/* Where this skill came from, kept on its own line and pushed to the
+          right so it reads as a badge rather than blending into the metadata. */}
+      <SkillSourceRow
+        skillId={skill.id}
+        fallbackUrl={githubUrl}
+        className="mb-3 justify-end"
+      />
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
         {tools && <SyncDots skill={skill} tools={tools} size="sm" includeOrphan />}
         {skill.tags.length > 0 && (
@@ -269,9 +276,6 @@ function SkillDetailPanelContent({
           {t("common.openFolder")}
         </button>
       </div>
-      {/* Where this skill came from. The skill's own file often names nothing,
-          so the user can record it themselves. */}
-      <SkillSourceRow skillId={skill.id} fallbackUrl={githubUrl} />
       {metadataItems.length > 0 && (
         <div className="mt-4 rounded-xl border border-border-subtle bg-surface/70">
           <button

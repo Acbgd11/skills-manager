@@ -1443,6 +1443,33 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         meta={
           localDetailSkill ? (
             <div className="flex flex-col gap-2">
+              {/* Provenance is recorded against the library record when this
+                  skill has one; a skill that lives only in the agent's folder
+                  cannot be keyed, so it falls back to whatever its file says. */}
+              {localDetailSkill.center_skill_id ? (
+                <SkillSourceRow
+                  skillId={localDetailSkill.center_skill_id}
+                  fallbackUrl={localDetailGithubUrl}
+                  className="justify-end"
+                />
+              ) : localDetailGithubUrl ? (
+                <div className="flex flex-wrap items-center justify-end gap-2 text-[12px]">
+                  <span className="text-[12px] font-medium text-muted">
+                    {t("skillSource.label")}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void openUrl(localDetailGithubUrl).catch(() => {});
+                    }}
+                    title={localDetailGithubUrl}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-accent-border bg-accent-bg px-3 py-1 text-[12px] font-semibold text-accent outline-none transition-colors hover:border-accent focus-visible:ring-2 focus-visible:ring-border"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    {sourceSiteName(localDetailGithubUrl)}
+                  </button>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-2">
                 <span className={cn("rounded-full px-2.5 py-1 text-[12px] font-medium", getLocalStatusMeta(t, localDetailSkill.sync_status).className)}>
                   {getLocalStatusMeta(t, localDetailSkill.sync_status).label}
@@ -1460,30 +1487,6 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                   {t("common.openFolder")}
                 </button>
               </div>
-              {/* Provenance is recorded against the library record when this
-                  skill has one; a skill that lives only in the agent's folder
-                  cannot be keyed, so it falls back to whatever its file says. */}
-              {localDetailSkill.center_skill_id ? (
-                <SkillSourceRow
-                  skillId={localDetailSkill.center_skill_id}
-                  fallbackUrl={localDetailGithubUrl}
-                />
-              ) : localDetailGithubUrl ? (
-                <div className="mt-2 text-[12px]">
-                  <span className="text-muted">{t("skillSource.label")} </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void openUrl(localDetailGithubUrl).catch(() => {});
-                    }}
-                    title={localDetailGithubUrl}
-                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    {sourceSiteName(localDetailGithubUrl)}
-                  </button>
-                </div>
-              ) : null}
               {localDetailSkill.zh_name ? (
                 <p className="text-[13px] text-secondary">
                   {localDetailSkill.zh_name}
