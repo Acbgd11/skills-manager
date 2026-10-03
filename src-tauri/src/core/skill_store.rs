@@ -1443,6 +1443,70 @@ impl SkillStore {
         Ok(())
     }
 
+    // ── User-entered skill provenance ──
+
+    /// The user's own source record for a skill, if they set one.
+    pub fn get_skill_source(&self, skill_id: &str) -> Result<Option<(Option<String>, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT url, note FROM skill_sources WHERE skill_id = ?1")?;
+        let mut rows = stmt.query([skill_id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some((row.get(0)?, row.get(1)?))),
+            None => Ok(None),
+        }
+    }
+
+    /// Every user-entered source, so a list view can resolve them in one read.
+    pub fn get_all_skill_sources(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (Option<String>, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT skill_id, url, note FROM skill_sources")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                (row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?),
+            ))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let (id, pair) = row?;
+            map.insert(id, pair);
+        }
+        Ok(map)
+    }
+
+    /// Record provenance for a skill. `None` for both clears the entry, so a
+    /// user who erases what they typed does not leave an empty row behind.
+    pub fn set_skill_source(
+        &self,
+        skill_id: &str,
+        url: Option<&str>,
+        note: Option<&str>,
+    ) -> Result<()> {
+        let url = url.map(str::trim).filter(|s| !s.is_empty());
+        let note = note.map(str::trim).filter(|s| !s.is_empty());
+        let conn = self.conn.lock().unwrap();
+        if url.is_none() && note.is_none() {
+            conn.execute("DELETE FROM skill_sources WHERE skill_id = ?1", [skill_id])?;
+            return Ok(());
+        }
+        conn.execute(
+            "INSERT INTO skill_sources (skill_id, url, note, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(skill_id) DO UPDATE SET
+                url=excluded.url, note=excluded.note, updated_at=excluded.updated_at",
+            rusqlite::params![
+                skill_id,
+                url,
+                note,
+                chrono::Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn clear_translations(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM skill_translations", [])?;
@@ -1503,6 +1567,60 @@ impl SkillStore {
             rusqlite::params![content_hash, source_path, zh_body, model, created_at],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod skill_source_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn saves_and_reads_back_a_link_and_a_note() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+
+        assert!(store.get_skill_source("s1").unwrap().is_none());
+
+        store
+            .set_skill_source("s1", Some("https://github.com/o/r"), Some("hand-written"))
+            .unwrap();
+        let (url, note) = store.get_skill_source("s1").unwrap().unwrap();
+        assert_eq!(url.as_deref(), Some("https://github.com/o/r"));
+        assert_eq!(note.as_deref(), Some("hand-written"));
+    }
+
+    #[test]
+    fn a_note_without_a_link_is_kept() {
+        // "No public source, I wrote it" is a meaningful thing to record, and
+        // must not be dropped just because it has no URL to open.
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        store.set_skill_source("s1", None, Some("自己写的")).unwrap();
+        let (url, note) = store.get_skill_source("s1").unwrap().unwrap();
+        assert_eq!(url, None);
+        assert_eq!(note.as_deref(), Some("自己写的"));
+    }
+
+    #[test]
+    fn whitespace_only_values_count_as_cleared() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        store.set_skill_source("s1", Some("https://x.test"), None).unwrap();
+        store.set_skill_source("s1", Some("   "), Some("")).unwrap();
+        assert!(store.get_skill_source("s1").unwrap().is_none());
+    }
+
+    #[test]
+    fn updating_overwrites_in_place() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        store.set_skill_source("s1", Some("https://old.test"), None).unwrap();
+        store.set_skill_source("s1", Some("https://new.test"), Some("n")).unwrap();
+        let (url, note) = store.get_skill_source("s1").unwrap().unwrap();
+        assert_eq!(url.as_deref(), Some("https://new.test"));
+        assert_eq!(note.as_deref(), Some("n"));
+        assert_eq!(store.get_all_skill_sources().unwrap().len(), 1);
     }
 }
 

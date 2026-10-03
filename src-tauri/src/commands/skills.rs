@@ -236,6 +236,15 @@ pub struct SkillDocumentDto {
     pub central_path: String,
 }
 
+/// User-entered provenance. Either field may be absent on its own: a note with
+/// no link is meaningful ("hand-written, never published"), and a link with no
+/// note is the common case.
+#[derive(Debug, Serialize)]
+pub struct SkillSourceDto {
+    pub url: Option<String>,
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SourceSkillDocumentDto {
     pub skill_id: String,
@@ -370,6 +379,38 @@ pub async fn get_skills_for_preset(
             .into_iter()
             .map(|skill| managed_skill_to_dto(&store, skill, &all_targets, &tags_map))
             .collect())
+    })
+    .await?
+}
+
+/// The user's own provenance record for a skill: an optional link and an
+/// optional free-text note. Both empty means they never set one.
+#[tauri::command]
+pub async fn get_skill_source(
+    store: State<'_, Arc<SkillStore>>,
+    skill_id: String,
+) -> Result<Option<SkillSourceDto>, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let found = store.get_skill_source(&skill_id).map_err(AppError::db)?;
+        Ok(found.map(|(url, note)| SkillSourceDto { url, note }))
+    })
+    .await?
+}
+
+/// Store provenance the user typed. Sending both as `None`/empty clears it.
+#[tauri::command]
+pub async fn set_skill_source(
+    store: State<'_, Arc<SkillStore>>,
+    skill_id: String,
+    url: Option<String>,
+    note: Option<String>,
+) -> Result<(), AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store
+            .set_skill_source(&skill_id, url.as_deref(), note.as_deref())
+            .map_err(AppError::db)
     })
     .await?
 }

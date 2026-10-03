@@ -1227,5 +1227,14 @@
     "bodyIncomplete": "The translation came back incomplete and was not saved. Try again.",
     "alreadyRunning": "A translation is already running. Wait for it to finish.",
     "translatingBodies": "Translating document bodies… ({{done}}/{{total}})"
+  },
+  "skillSource": {
+    "label": "Source",
+    "none": "No source recorded",
+    "edit": "Edit",
+    "urlLabel": "Source link",
+    "urlPlaceholder": "https://…",
+    "noteLabel": "Note",
+    "notePlaceholder": "e.g. wrote it myself, not published"
   }
 }

@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version. Bump this when adding a new migration.
-const LATEST_VERSION: u32 = 10;
+const LATEST_VERSION: u32 = 11;
 
 /// Run all pending migrations on the database.
 ///
@@ -57,6 +57,7 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
         7 => migrate_v7_to_v8(conn),
         8 => migrate_v8_to_v9(conn),
         9 => migrate_v9_to_v10(conn),
+        10 => migrate_v10_to_v11(conn),
         _ => bail!("unknown migration version: {from_version}"),
     }
 }
@@ -353,6 +354,26 @@ fn migrate_v9_to_v10(conn: &Connection) -> Result<()> {
             zh_body      TEXT NOT NULL,
             model        TEXT NOT NULL,
             created_at   TEXT NOT NULL
+        );",
+    )?;
+    Ok(())
+}
+
+/// v10 → v11: user-entered provenance for a skill.
+///
+/// Most skills on a real machine carry no source: they are hand-written or
+/// came from a private channel, so nothing in the file points anywhere and no
+/// search can find one. This lets the user record what a skill is and where it
+/// came from, keyed by skill id so it survives renames of the folder on disk.
+/// The link is stored separately from the free-text note because only a URL
+/// can be opened — the note is for the user's own words.
+fn migrate_v10_to_v11(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS skill_sources (
+            skill_id   TEXT PRIMARY KEY,
+            url        TEXT,
+            note       TEXT,
+            updated_at TEXT NOT NULL
         );",
     )?;
     Ok(())

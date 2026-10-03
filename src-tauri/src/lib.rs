@@ -964,6 +964,14 @@ pub fn run() {
                         step.elapsed().as_millis()
                     );
                 }
+                // Some skills do have a public source; record it once so the
+                // detail view has something to open without the user having to
+                // look it up. Never overwrites what the user typed.
+                let sourced =
+                    commands::agent_workspace::backfill_known_skill_sources(&store_for_backfill);
+                if sourced > 0 {
+                    log::info!("startup: recorded {sourced} known skill source(s)");
+                }
             });
 
             // Publish the CLI that ships in this bundle to a fixed path so
@@ -1080,6 +1088,8 @@ pub fn run() {
             commands::skills::get_managed_skills,
             commands::skills::get_skills_for_preset,
             commands::skills::get_skill_document,
+            commands::skills::get_skill_source,
+            commands::skills::set_skill_source,
             commands::skills::get_source_skill_document,
             commands::skills::get_skill_source_diff,
             commands::skills::delete_managed_skill,

@@ -23,12 +23,12 @@ import {
   type SkillToolToggle,
   type ToolInfo,
 } from "../lib/tauri";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { SkillSourceDiffViewer } from "./SkillSourceDiffViewer";
 import { DetailSheet } from "./DetailSheet";
 import { SkillMarkdown } from "./SkillMarkdown";
 import { AgentToggleSection, type AgentToggleItem } from "./AgentToggleSection";
 import { SkillProjectsSection } from "./SkillProjectsSection";
+import { SkillSourceRow } from "./SkillSourceRow";
 import { SyncDots } from "./SyncDots";
 import { revealManagedSkillFolder } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
@@ -268,27 +268,10 @@ function SkillDetailPanelContent({
           <FolderOpen className="h-3.5 w-3.5" />
           {t("common.openFolder")}
         </button>
-        {/* A local/import skill has no remote, so say so rather than leaving a
-            blank where a link would otherwise be. */}
-        {githubUrl ? (
-          <button
-            type="button"
-            onClick={() => {
-              void openUrl(githubUrl).catch(() => {});
-            }}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
-            title={githubUrl}
-            aria-label={t("pluginSkills.openRepo")}
-          >
-            <Github className="h-3.5 w-3.5" />
-            {t("pluginSkills.openRepo")}
-          </button>
-        ) : (
-          <span className="shrink-0 px-1.5 py-0.5 text-[12px] text-faint">
-            {t("pluginSkills.noRepo")}
-          </span>
-        )}
       </div>
+      {/* Where this skill came from. The skill's own file often names nothing,
+          so the user can record it themselves. */}
+      <SkillSourceRow skillId={skill.id} fallbackUrl={githubUrl} />
       {metadataItems.length > 0 && (
         <div className="mt-4 rounded-xl border border-border-subtle bg-surface/70">
           <button

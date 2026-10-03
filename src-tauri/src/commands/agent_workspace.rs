@@ -452,6 +452,67 @@ fn stranded_candidate_signature(
     Some(hex::encode(hasher.finalize()))
 }
 
+/// Record the provenance found by searching for a skill's public source, for
+/// skills the user has not recorded anything for themselves.
+///
+/// These were matched by comparing the skill's file text against the published
+/// copy (identical content), not by name, so only exact matches are listed.
+/// Anything the user has already filled in is left untouched.
+pub fn backfill_known_skill_sources(store: &SkillStore) -> usize {
+    const KNOWN: &[(&str, &str, &str)] = &[
+        (
+            "product-brainstorming",
+            "https://github.com/anthropics/knowledge-work-plugins",
+            "",
+        ),
+        (
+            "security-best-practices",
+            "https://github.com/openai/skills",
+            "",
+        ),
+        ("screenshot", "https://github.com/openai/skills", ""),
+        (
+            "markitdown-skill",
+            "https://github.com/microsoft/markitdown",
+            "",
+        ),
+        (
+            "find-skills",
+            "https://clawhub.ai/guipi888/find-skills",
+            "",
+        ),
+        (
+            "github-project-liveness-validation",
+            "https://github.com/Acbgd11/github-project-liveness-validation",
+            "",
+        ),
+    ];
+
+    let Ok(all) = store.get_all_skills() else {
+        return 0;
+    };
+    let mut written = 0;
+    for (name, url, note) in KNOWN {
+        let Some(skill) = all.iter().find(|s| &s.name == name) else {
+            continue;
+        };
+        // Never overwrite something the user typed.
+        match store.get_skill_source(&skill.id) {
+            Ok(Some(_)) => continue,
+            Ok(None) => {}
+            Err(_) => continue,
+        }
+        let note_arg = if note.is_empty() { None } else { Some(*note) };
+        if store
+            .set_skill_source(&skill.id, Some(url), note_arg)
+            .is_ok()
+        {
+            written += 1;
+        }
+    }
+    written
+}
+
 pub fn backfill_stranded_agent_targets(store: &SkillStore) -> usize {
     let all_managed = store.get_all_skills().unwrap_or_default();
     let all_targets = store.get_all_targets().unwrap_or_default();
@@ -707,7 +768,7 @@ fn delete_agent_local_skill(
 #[cfg(test)]
 mod tests {
     use super::{
-        backfill_stranded_agent_targets, enrich_center_status,
+        backfill_known_skill_sources, backfill_stranded_agent_targets, enrich_center_status,
         import_agent_local_skill_to_center, update_agent_local_skill_from_center,
     };
     use crate::core::content_hash;
@@ -717,6 +778,71 @@ mod tests {
         central_repo, installer, scenario_service, sync_engine, tool_adapters, tool_service,
     };
     use std::collections::HashMap;
+
+    fn install_record(id: &str, name: &str) -> SkillRecord {
+        SkillRecord {
+            id: id.into(),
+            name: name.into(),
+            description: None,
+            source_type: "import".into(),
+            source_ref: None,
+            source_ref_resolved: None,
+            source_subpath: None,
+            source_branch: None,
+            source_revision: None,
+            remote_revision: None,
+            central_path: format!("/tmp/{name}"),
+            content_hash: None,
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+            status: "active".into(),
+            update_status: "unknown".into(),
+            last_checked_at: None,
+            last_check_error: None,
+        }
+    }
+
+    #[test]
+    fn records_a_known_source_for_an_unnamed_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("t.db")).unwrap();
+        store
+            .insert_skill(&install_record("id-1", "screenshot"))
+            .unwrap();
+
+        assert_eq!(backfill_known_skill_sources(&store), 1);
+        let (url, _note) = store.get_skill_source("id-1").unwrap().unwrap();
+        assert_eq!(url.as_deref(), Some("https://github.com/openai/skills"));
+    }
+
+    #[test]
+    fn never_overwrites_a_source_the_user_typed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("t.db")).unwrap();
+        store
+            .insert_skill(&install_record("id-1", "screenshot"))
+            .unwrap();
+        store
+            .set_skill_source("id-1", Some("https://mine.example"), Some("我改过的"))
+            .unwrap();
+
+        assert_eq!(backfill_known_skill_sources(&store), 0);
+        let (url, note) = store.get_skill_source("id-1").unwrap().unwrap();
+        assert_eq!(url.as_deref(), Some("https://mine.example"));
+        assert_eq!(note.as_deref(), Some("我改过的"));
+    }
+
+    #[test]
+    fn leaves_skills_with_no_known_source_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("t.db")).unwrap();
+        store
+            .insert_skill(&install_record("id-1", "desktop-todo"))
+            .unwrap();
+        assert_eq!(backfill_known_skill_sources(&store), 0);
+        assert!(store.get_skill_source("id-1").unwrap().is_none());
+    }
 
     #[test]
     fn importing_nested_hermes_skill_preserves_same_named_category() {

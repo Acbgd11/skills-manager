@@ -3,9 +3,9 @@ import { useParams, useNavigate, Navigate } from "react-router-dom";
 import {
   ChevronRight,
   Download,
+  ExternalLink,
   FileText,
   FolderOpen,
-  Github,
   Globe,
   LayoutGrid,
   List,
@@ -24,12 +24,13 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
-import { cn, compactHomePath, skillGithubUrl } from "../utils";
+import { cn, compactHomePath, skillGithubUrl, sourceSiteName } from "../utils";
 import { useApp } from "../context/AppContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PresetBar } from "../components/PresetBar";
 import { AgentIcon } from "../components/AgentIcon";
 import { DetailSheet } from "../components/DetailSheet";
+import { SkillSourceRow } from "../components/SkillSourceRow";
 import { SkillMarkdown } from "../components/SkillMarkdown";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectSkill, AgentPresenceEntry, CrossAgentSkill } from "../lib/tauri";
@@ -1458,27 +1459,31 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
                   <FolderOpen className="h-3 w-3" />
                   {t("common.openFolder")}
                 </button>
-                {/* The agent's copy carries no remote of its own; borrow the
-                    library record's when this skill is in the center, else say
-                    there is none. */}
-                {localDetailGithubUrl ? (
+              </div>
+              {/* Provenance is recorded against the library record when this
+                  skill has one; a skill that lives only in the agent's folder
+                  cannot be keyed, so it falls back to whatever its file says. */}
+              {localDetailSkill.center_skill_id ? (
+                <SkillSourceRow
+                  skillId={localDetailSkill.center_skill_id}
+                  fallbackUrl={localDetailGithubUrl}
+                />
+              ) : localDetailGithubUrl ? (
+                <div className="mt-2 text-[12px]">
+                  <span className="text-muted">{t("skillSource.label")} </span>
                   <button
                     type="button"
                     onClick={() => {
                       void openUrl(localDetailGithubUrl).catch(() => {});
                     }}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
                     title={localDetailGithubUrl}
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-muted outline-none transition-colors hover:bg-surface-hover hover:text-secondary focus-visible:ring-2 focus-visible:ring-border"
                   >
-                    <Github className="h-3 w-3" />
-                    {t("pluginSkills.openRepo")}
+                    <ExternalLink className="h-3 w-3" />
+                    {sourceSiteName(localDetailGithubUrl)}
                   </button>
-                ) : (
-                  <span className="shrink-0 px-2 py-1 text-[12px] text-faint">
-                    {t("pluginSkills.noRepo")}
-                  </span>
-                )}
-              </div>
+                </div>
+              ) : null}
               {localDetailSkill.zh_name ? (
                 <p className="text-[13px] text-secondary">
                   {localDetailSkill.zh_name}

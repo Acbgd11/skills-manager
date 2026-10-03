@@ -8,6 +8,28 @@ export function cn(...inputs: ClassValue[]) {
 /** Shorten the user's home directory to `~` for display. Windows paths also
  *  get their separators unified: agent dirs are joined from `/`-separated
  *  relative paths, which reads as `~\.workbuddy/skills` otherwise (#495). */
+/** A hostname's human name, so a link says where it goes rather than showing a
+ *  bare URL. Falls back to the hostname itself for anything unrecognised. */
+export function sourceSiteName(url: string): string {
+    let host: string;
+    try {
+        host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    } catch {
+        return url;
+    }
+    const known: Record<string, string> = {
+        "github.com": "GitHub",
+        "gitee.com": "Gitee",
+        "gitlab.com": "GitLab",
+        "clawhub.ai": "ClawHub",
+        "clawhub.com": "ClawHub",
+        "xiaping.coze.com": "Coze",
+        "coze.com": "Coze",
+        "skills.sh": "skills.sh",
+    };
+    return known[host] ?? host;
+}
+
 /** The GitHub URL a skill can be visited at, or null when it has none.
  *
  * Only `git`/`skillssh` skills carry a remote; `local`/`import` skills store a

@@ -249,6 +249,18 @@ export const getSkillsForPreset = (presetId: string) =>
 export const getSkillDocument = (skillId: string) =>
   invoke<SkillDocument>("get_skill_document", { skillId });
 
+/** Provenance the user typed in themselves. Either field may be absent. */
+export interface SkillSource {
+  url: string | null;
+  note: string | null;
+}
+
+export const getSkillSource = (skillId: string) =>
+  invoke<SkillSource | null>("get_skill_source", { skillId });
+
+export const setSkillSource = (skillId: string, url?: string, note?: string) =>
+  invoke<void>("set_skill_source", { skillId, url, note });
+
 export const getSourceSkillDocument = (skillId: string) =>
   invoke<SourceSkillDocument>("get_source_skill_document", { skillId });
 

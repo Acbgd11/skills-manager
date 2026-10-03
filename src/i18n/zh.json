@@ -1227,5 +1227,14 @@
     "bodyIncomplete": "译文不完整，已放弃保存。请重试。",
     "alreadyRunning": "已有翻译任务在进行，请等它跑完。",
     "translatingBodies": "正在翻译正文…（{{done}}/{{total}} 篇）"
+  },
+  "skillSource": {
+    "label": "来源",
+    "none": "未记录来源",
+    "edit": "编辑",
+    "urlLabel": "来源链接",
+    "urlPlaceholder": "https://…",
+    "noteLabel": "备注",
+    "notePlaceholder": "例如：自己写的，未公开"
   }
 }
