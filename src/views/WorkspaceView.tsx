@@ -21,7 +21,6 @@ import {
   Upload,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn, compactHomePath, skillGithubUrl, sourceSiteName } from "../utils";
@@ -31,6 +30,7 @@ import { PresetBar } from "../components/PresetBar";
 import { AgentIcon } from "../components/AgentIcon";
 import { DetailSheet } from "../components/DetailSheet";
 import { SkillSourceRow } from "../components/SkillSourceRow";
+import { SkillBodyZh } from "../components/SkillBodyZh";
 import { SkillMarkdown } from "../components/SkillMarkdown";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectSkill, AgentPresenceEntry, CrossAgentSkill } from "../lib/tauri";
@@ -368,13 +368,6 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   const [localDocContent, setLocalDocContent] = useState<string | null>(null);
   const [localDocLoading, setLocalDocLoading] = useState(false);
   const [localContentTab, setLocalContentTab] = useState<"local" | "zh">("local");
-  const [localZhDocContent, setLocalZhDocContent] = useState<string | null>(null);
-  const [localZhDocLoading, setLocalZhDocLoading] = useState(false);
-  const [localZhDocError, setLocalZhDocError] = useState(false);
-  /** Backend's own message when a translation failed, shown as-is. */
-  const [localZhDocErrorText, setLocalZhDocErrorText] = useState<string | null>(null);
-  // (done, total) chunk progress while a long body translates.
-  const [localZhChunk, setLocalZhChunk] = useState<{ done: number; total: number } | null>(null);
   const [uploadConfirmSkill, setUploadConfirmSkill] = useState<ProjectSkill | null>(null);
   const [pullConfirmSkill, setPullConfirmSkill] = useState<ProjectSkill | null>(null);
   const [deleteLocalConfirmSkill, setDeleteLocalConfirmSkill] = useState<ProjectSkill | null>(null);
@@ -827,11 +820,6 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       setLocalDetailSkill(skill);
       setLocalContentTab("local");
       setLocalDocContent(null);
-      setLocalZhDocContent(null);
-      setLocalZhDocError(false);
-      setLocalZhDocErrorText(null);
-      setLocalZhChunk(null);
-      setLocalZhDocLoading(false);
       setLocalDocLoading(true);
 
       api
@@ -839,13 +827,6 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         .then((doc) => {
           if (localDetailRequestRef.current !== requestId) return;
           setLocalDocContent(doc.content);
-          // Show an already-cached translation without spending a model call.
-          api
-            .getCachedBodyTranslation(doc.content)
-            .then((zh) => {
-              if (localDetailRequestRef.current === requestId) setLocalZhDocContent(zh);
-            })
-            .catch(() => {});
         })
         .catch(() => {
           if (localDetailRequestRef.current === requestId) setLocalDocContent(null);
@@ -857,64 +838,14 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     [currentTool]
   );
 
-  // Long bodies are translated in chunks; show which one is in flight. Scoped
-  // unlisten, same idiom as TranslateButton.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let active = true;
-    listen<{ done: number; total: number }>("body-translation-progress", (event) => {
-      if (active) setLocalZhChunk(event.payload);
-    })
-      .then((fn) => {
-        if (active) unlisten = fn;
-        else fn();
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, []);
-
-  // Translate the detail view's body on demand. The backend caches by content
-  // hash, so re-opening the same skill costs nothing after the first run.
-  // An agent's local skill has no remote of its own, so take the link from the
-  // library record it is synced with (`center_skill_id`). Skills that exist
-  // only in the agent's directory have none.
+  // An agent's local skill has no remote of its own, so borrow the library
+  // record's when this skill is in the center.
   const localDetailGithubUrl = useMemo(() => {
     const centerId = localDetailSkill?.center_skill_id;
     if (!centerId) return null;
     const managed = managedSkills.find((s) => s.id === centerId);
     return managed ? skillGithubUrl(managed) : null;
   }, [localDetailSkill, managedSkills]);
-
-  const handleTranslateLocalDoc = useCallback(async () => {
-    if (!localDetailSkill || !localDocContent || localZhDocLoading) return;
-    const requestId = localDetailRequestRef.current;
-    setLocalZhDocLoading(true);
-    setLocalZhDocError(false);
-    setLocalZhDocErrorText(null);
-    try {
-      const zh = await api.translateSkillBody(localDocContent, localDetailSkill.relative_path);
-      if (localDetailRequestRef.current !== requestId) return;
-      if (zh) {
-        setLocalZhDocContent(zh);
-      } else {
-        // Nothing came back (Usually an empty reply). We can't fix it here, so
-        // say the translation did not arrive rather than guessing why.
-        setLocalZhDocError(true);
-      }
-      setLocalZhDocLoading(false);
-    } catch (error) {
-      if (localDetailRequestRef.current === requestId) {
-        setLocalZhDocError(true);
-        // Surface the backend's own wording: it distinguishes a cut-off reply
-        // from a connection problem, and the user needs that difference.
-        setLocalZhDocErrorText(getErrorMessage(error, t("translation.bodyFailed")));
-        setLocalZhDocLoading(false);
-      }
-    }
-  }, [localDetailSkill, localDocContent, localZhDocLoading, t]);
 
   const existsInGlobal = useCallback(
     (skill: ManagedSkill, agentK: string) =>
@@ -1537,48 +1468,11 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         {localDocLoading ? (
           <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
         ) : localContentTab === "zh" ? (
-          localZhDocLoading ? (
-            <div className="mt-12 text-center text-[13px] text-muted">
-              {localZhChunk && localZhChunk.total > 1
-                ? t("translation.translatingBodyChunk", {
-                    done: Math.min(localZhChunk.done + 1, localZhChunk.total),
-                    total: localZhChunk.total,
-                  })
-                : t("translation.translatingBody")}
-            </div>
-          ) : localZhDocContent ? (
-            <div>
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <span className="text-[12px] text-muted">{t("translation.bodyDisclaimer")}</span>
-                {localDocContent && (
-                  <button
-                    type="button"
-                    onClick={() => setLocalContentTab("local")}
-                    className="rounded-md border border-border-subtle bg-bg-secondary px-2.5 py-1 text-[12px] text-secondary transition-colors hover:bg-surface-hover outline-none"
-                  >
-                    {t("translation.viewOriginal")}
-                  </button>
-                )}
-              </div>
-              <SkillMarkdown content={localZhDocContent} />
-            </div>
-          ) : (
-            <div className="mt-12 flex flex-col items-center gap-3 text-center">
-              <p className="text-[13px] text-muted">
-                {localZhDocError
-                  ? (localZhDocErrorText ?? t("translation.bodyFailed"))
-                  : t("translation.bodyNotTranslated")}
-              </p>
-              <button
-                type="button"
-                onClick={() => void handleTranslateLocalDoc()}
-                disabled={!localDocContent}
-                className="rounded-md border border-border-subtle bg-bg-secondary px-3 py-1.5 text-[12px] text-secondary transition-colors hover:bg-surface-hover outline-none disabled:opacity-50"
-              >
-                {t("translation.translate")}
-              </button>
-            </div>
-          )
+          <SkillBodyZh
+            skillId={localDetailSkill?.center_skill_id ?? localDetailSkill?.relative_path ?? ""}
+            content={localDocContent}
+            onShowOriginal={() => setLocalContentTab("local")}
+          />
         ) : localDocContent ? (
           <SkillMarkdown content={localDocContent} />
         ) : (
