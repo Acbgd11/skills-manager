@@ -50,6 +50,16 @@ pub fn build_prompt(batch: &[TranslationInput]) -> String {
     )
 }
 
+/// Output ceiling for one request.
+///
+/// Measured against the live endpoint: a 4000-character chunk normally needs
+/// 2000-3000 output tokens, but some chunks make the model spend far more —
+/// one 3992-character chunk burned 6999 tokens at 8000 and 10758 at 16000,
+/// for a translation of under 2000 characters. At 8000 that chunk returned an
+/// *empty* reply with `finish_reason=length`: the whole budget went on
+/// reasoning and nothing was left for the answer. 16000 leaves room for that.
+const TRANSLATE_MAX_TOKENS: u32 = 16000;
+
 pub fn build_request(cfg: &TranslationConfig, api_key: &str, prompt: &str) -> HttpRequestSpec {
     let base = cfg.endpoint.trim_end_matches('/');
     match cfg.format {
@@ -62,7 +72,7 @@ pub fn build_request(cfg: &TranslationConfig, api_key: &str, prompt: &str) -> Ht
             ],
             body: serde_json::json!({
                 "model": cfg.model,
-                "max_tokens": 8000,
+                "max_tokens": TRANSLATE_MAX_TOKENS,
                 "messages": [{ "role": "user", "content": prompt }],
             }),
         },
@@ -74,7 +84,7 @@ pub fn build_request(cfg: &TranslationConfig, api_key: &str, prompt: &str) -> Ht
             ],
             body: serde_json::json!({
                 "model": cfg.model,
-                "max_tokens": 8000,
+                "max_tokens": TRANSLATE_MAX_TOKENS,
                 "messages": [{ "role": "user", "content": prompt }],
             }),
         },
@@ -253,7 +263,7 @@ mod tests {
         assert_eq!(spec.url, "http://127.0.0.1:8789/v1/chat/completions");
         assert!(spec.headers.iter().any(|(k, v)| k == "Authorization" && v == "Bearer sk-test"));
         assert_eq!(spec.body["model"], "test-model");
-        assert_eq!(spec.body["max_tokens"], 8000);
+        assert_eq!(spec.body["max_tokens"], TRANSLATE_MAX_TOKENS);
         assert_eq!(spec.body["messages"][0]["role"], "user");
     }
 

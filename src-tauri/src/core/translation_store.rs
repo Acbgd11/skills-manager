@@ -101,10 +101,14 @@ pub fn strip_code_fence(raw: &str) -> String {
     inner.trim().to_string()
 }
 
-/// Target characters per chunk. The model's output ceiling is 8000 tokens and
-/// Chinese costs roughly one token per character, so 4000 leaves headroom for
-/// a translation that runs longer than its source.
-pub const BODY_CHUNK_CHARS: usize = 4000;
+/// Target characters per chunk.
+///
+/// Kept well below the request's output ceiling because the model's token use
+/// is not proportional to the source: one 3992-character chunk spent 6999
+/// tokens on a 1900-character translation, and a handful spend far more than
+/// the text warrants. A smaller chunk bounds that overspend; `translate_one_body`
+/// halves it again if a chunk still comes back cut off.
+pub const BODY_CHUNK_CHARS: usize = 2500;
 
 /// Split a Markdown document into chunks small enough to translate without
 /// hitting the output limit.

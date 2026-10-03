@@ -364,44 +364,64 @@ fn translate_one_body(
     if store.get_body_translation(&hash).map_err(AppError::db)?.is_some() {
         return Ok(BodyOutcome::Done);
     }
-    let chunks =
-        translation_store::split_markdown_chunks(content, translation_store::BODY_CHUNK_CHARS);
-    if chunks.is_empty() {
-        return Ok(BodyOutcome::Empty);
-    }
 
-    log::info!(
-        "body translate: {source_path} is {} chars in {} chunk(s)",
-        content.chars().count(),
-        chunks.len()
-    );
-    let mut parts = Vec::with_capacity(chunks.len());
-    for (index, chunk) in chunks.iter().enumerate() {
-        let prompt = translation_store::build_body_prompt(chunk);
-        let (reply, truncated) = call_model(cfg, &prompt)?;
-        log::info!(
-            "body translate: {source_path} chunk {}/{} -> {} chars (truncated={truncated})",
-            index + 1,
-            chunks.len(),
-            reply.chars().count()
-        );
-        if truncated {
-            log::warn!("body chunk hit the output limit; refusing to cache {source_path}");
-            return Ok(BodyOutcome::Truncated);
-        }
-        let part = translation_store::strip_code_fence(&reply);
-        if part.trim().is_empty() {
-            log::warn!("body chunk {index} came back empty for {source_path}");
+    // Try the normal chunk size first; if any chunk comes back cut off, halve
+    // the size and try the whole document again. A section the model overspends
+    // on is then split further instead of failing the skill outright.
+    for attempt in 0..2 {
+        let size = translation_store::BODY_CHUNK_CHARS >> attempt;
+        let chunks = translation_store::split_markdown_chunks(content, size);
+        if chunks.is_empty() {
             return Ok(BodyOutcome::Empty);
         }
-        parts.push(part);
-    }
+        log::info!(
+            "body translate: {source_path} is {} chars in {} chunk(s) at {size}/chunk",
+            content.chars().count(),
+            chunks.len()
+        );
 
-    let created_at = chrono::Utc::now().to_rfc3339();
-    store
-        .upsert_body_translation(&hash, source_path, &parts.join("\n\n"), &cfg.model, &created_at)
-        .map_err(AppError::db)?;
-    Ok(BodyOutcome::Done)
+        let mut parts = Vec::with_capacity(chunks.len());
+        let mut retry_smaller = false;
+        for (index, chunk) in chunks.iter().enumerate() {
+            let prompt = translation_store::build_body_prompt(chunk);
+            let (reply, truncated) = call_model(cfg, &prompt)?;
+            log::info!(
+                "body translate: {source_path} chunk {}/{} -> {} chars (truncated={truncated})",
+                index + 1,
+                chunks.len(),
+                reply.chars().count()
+            );
+            if truncated {
+                // Nothing usable came back, so the whole document is retried at
+                // a smaller chunk size rather than one section being abandoned.
+                if attempt == 0 {
+                    log::warn!("{source_path}: chunk {}/{} hit the output limit; retrying with smaller chunks",
+                        index + 1, chunks.len());
+                    retry_smaller = true;
+                    break;
+                }
+                log::warn!("{source_path}: chunk {}/{} hit the output limit at the smaller size too",
+                    index + 1, chunks.len());
+                return Ok(BodyOutcome::Truncated);
+            }
+            let part = translation_store::strip_code_fence(&reply);
+            if part.trim().is_empty() {
+                log::warn!("body chunk {index} came back empty for {source_path}");
+                return Ok(BodyOutcome::Empty);
+            }
+            parts.push(part);
+        }
+        if retry_smaller {
+            continue;
+        }
+
+        let created_at = chrono::Utc::now().to_rfc3339();
+        store
+            .upsert_body_translation(&hash, source_path, &parts.join("\n\n"), &cfg.model, &created_at)
+            .map_err(AppError::db)?;
+        return Ok(BodyOutcome::Done);
+    }
+    Ok(BodyOutcome::Truncated)
 }
 
 #[tauri::command]
