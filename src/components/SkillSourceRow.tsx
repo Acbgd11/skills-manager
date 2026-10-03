@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
-import { ExternalLink, Pencil, Check, X } from "lucide-react";
+import { ExternalLink, Pencil, Check, X, Plus } from "lucide-react";
 import { getSkillSource, setSkillSource } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
 import { sourceSiteName } from "../utils";
@@ -149,9 +149,16 @@ export function SkillSourceRow({
           {sourceSiteName(effectiveUrl)}
         </button>
       ) : (
-        <span className="rounded-full border border-dashed border-border-subtle px-3 py-1 text-[12px] text-faint">
+        // Clicking the placeholder opens the editor directly, so the whole row
+        // is actionable rather than leaving a dead label beside a small pencil.
+        <button
+          type="button"
+          onClick={beginEdit}
+          className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border-subtle px-3 py-1 text-[12px] text-faint outline-none transition-colors hover:border-accent hover:text-accent focus-visible:ring-2 focus-visible:ring-border"
+        >
+          <Plus className="h-3 w-3" />
           {t("skillSource.none")}
-        </span>
+        </button>
       )}
       {note ? (
         <span className="text-[12px] italic text-secondary">{note}</span>
