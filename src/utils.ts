@@ -5,9 +5,14 @@ export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
 
-/** Shorten the user's home directory to `~` for display. Windows paths also
- *  get their separators unified: agent dirs are joined from `/`-separated
- *  relative paths, which reads as `~\.workbuddy/skills` otherwise (#495). */
+/** Key for a skill's provenance record when it has no library id: a skill that
+ *  lives only in an agent's folder still needs somewhere to record where it
+ *  came from. Kept in one place because two panels build it, and a drift would
+ *  make a note recorded in one view invisible in the other. */
+export function localSkillSourceKey(agent: string, relativePath: string): string {
+    return `local:${agent}:${relativePath}`;
+}
+
 /** A hostname's human name, so a link says where it goes rather than showing a
  *  bare URL. Falls back to the hostname itself for anything unrecognised. */
 export function sourceSiteName(url: string): string {
@@ -48,6 +53,9 @@ export function skillGithubUrl(skill: {
     return null;
 }
 
+/** Shorten the user's home directory to `~` for display. Windows paths also
+ *  get their separators unified: agent dirs are joined from `/`-separated
+ *  relative paths, which reads as `~\.workbuddy/skills` otherwise (#495). */
 export function compactHomePath(path: string) {
     const display = /^[A-Za-z]:\\/.test(path) ? path.replace(/\//g, "\\") : path;
     return display

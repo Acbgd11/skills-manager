@@ -39,7 +39,7 @@ import { PresetBar } from "../components/PresetBar";
 import { SkillMarkdown } from "../components/SkillMarkdown";
 import { getTagActiveColor, getTagColor, pruneStaleTagFilters, UNTAGGED_FILTER } from "../lib/skillTags";
 import { enabledInstalledAgentKeys, getDefaultExportAgents } from "../lib/exportAgents";
-import { cn } from "../utils";
+import { cn, localSkillSourceKey } from "../utils";
 import * as api from "../lib/tauri";
 import type { ProjectSkill, ManagedSkill, ProjectAgentTarget } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
@@ -1621,7 +1621,7 @@ function ProjectSkillDetailPanel({
           as the one the note is stored against. A skill that is only in the
           project is keyed by agent+path so it can still be recorded. */}
       <SkillSourceRow
-        skillId={skill.centerSkillIds[0] ?? `local:${skill.primaryVariant.agent}:${skill.relative_path}`}
+        skillId={skill.centerSkillIds[0] ?? localSkillSourceKey(skill.primaryVariant.agent, skill.relative_path)}
         className="mb-3 justify-end"
       />
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">

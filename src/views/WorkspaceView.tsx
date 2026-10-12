@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { cn, compactHomePath, skillGithubUrl } from "../utils";
+import { cn, compactHomePath, skillGithubUrl, localSkillSourceKey } from "../utils";
 import { useApp } from "../context/AppContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PresetBar } from "../components/PresetBar";
@@ -853,7 +853,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     if (!localDetailSkill) return "";
     if (localDetailSkill.center_skill_id) return localDetailSkill.center_skill_id;
     const agent = localDetailSkill.agent || currentToolKey || "unknown";
-    return `local:${agent}:${localDetailSkill.relative_path}`;
+    return localSkillSourceKey(agent, localDetailSkill.relative_path);
   }, [localDetailSkill, currentToolKey]);
 
   const existsInGlobal = useCallback(

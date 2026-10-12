@@ -716,7 +716,7 @@ pub async fn get_skill_source_diff(
     .await?
 }
 
-fn read_skill_document_from_dir(dir: &Path) -> Result<(String, String), AppError> {
+pub(crate) fn read_skill_document_from_dir(dir: &Path) -> Result<(String, String), AppError> {
     let candidates = [
         "SKILL.md",
         "skill.md",

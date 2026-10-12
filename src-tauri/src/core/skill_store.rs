@@ -1527,26 +1527,6 @@ impl SkillStore {
         }
     }
 
-    /// Cached body translations whose recorded model no longer matches the
-    /// configured one. Returns how many were removed.
-    ///
-    /// Deliberately does NOT judge completeness by comparing lengths. Chinese
-    /// is far denser than English — an 8600-character English document
-    /// legitimately becomes a 2800-character Chinese one — so a "translation
-    /// much shorter than source" rule deletes correct translations. Verified
-    /// against the live API: the same document translated in full, in one
-    /// request or in three chunks, lands at ~2700-3000 characters either way.
-    /// Genuine truncation is caught while translating instead, by reading the
-    /// reply's finish reason.
-    pub fn drop_body_translations_from_other_models(&self, current_model: &str) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
-        let removed = conn.execute(
-            "DELETE FROM skill_body_translations WHERE model <> ?1",
-            [current_model],
-        )?;
-        Ok(removed)
-    }
-
     /// Insert-or-replace a translated body, keyed by the source content hash.
     pub fn upsert_body_translation(
         &self,

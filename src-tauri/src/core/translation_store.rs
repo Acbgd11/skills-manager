@@ -82,12 +82,10 @@ pub fn strip_code_fence(raw: &str) -> String {
     let Some(first_newline) = text.find('\n') else {
         return text.to_string();
     };
-    let rest = &text[first_newline + 1..];
-    let trimmed = rest.trim_end();
-    let Some(opener) = text[..first_newline].chars().nth(3) else {
-        return text.to_string();
-    };
-    // The opening fence must be closing with the same language tag (if any).
+    // An opening fence may carry a language tag (```markdown) or none at all
+    // (```). Both are wrappers the prompt forbids, so neither is treated as
+    // content — only a missing closing fence keeps the text as-is.
+    let trimmed = text[first_newline + 1..].trim_end();
     if !trimmed.ends_with("```") {
         return text.to_string();
     }
@@ -97,7 +95,6 @@ pub fn strip_code_fence(raw: &str) -> String {
     if inner.trim_end().ends_with('`') {
         return text.to_string();
     }
-    let _ = opener;
     inner.trim().to_string()
 }
 
@@ -524,5 +521,33 @@ mod tests {
             chunk_count(&content, 100),
             split_markdown_chunks(&content, 100).len()
         );
+    }
+}
+
+#[cfg(test)]
+mod fence_verify {
+    use super::strip_code_fence;
+
+    #[test]
+    fn bare_fence_wrapper_is_stripped() {
+        // A wrapper with no language tag is still a wrapper. An earlier version
+        // only unwrapped tagged fences, so a bare ``` came back through with
+        // the fence intact and got cached as the document body.
+        let raw = "```\n# 标题\n\n正文。\n```";
+        assert_eq!(strip_code_fence(raw), "# 标题\n\n正文。");
+    }
+
+    #[test]
+    fn tagged_fence_wrapper_is_still_stripped() {
+        let raw = "```markdown\n# 标题\n```";
+        assert_eq!(strip_code_fence(raw), "# 标题");
+    }
+
+    #[test]
+    fn document_with_its_own_code_survives() {
+        // The reply is not a single wrapper — it carries its own fenced block,
+        // which must not be eaten.
+        let raw = "# 标题\n\n```bash\nls -la\n```\n";
+        assert_eq!(strip_code_fence(raw), raw.trim());
     }
 }

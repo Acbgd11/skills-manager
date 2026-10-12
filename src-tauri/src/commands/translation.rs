@@ -335,6 +335,22 @@ fn collect_bodies(store: &SkillStore) -> Vec<(String, String)> {
             }
         }
     }
+
+    // Library records that no agent links to. Their bodies are reachable from
+    // the skills library panel, so they need translating too — without this a
+    // skill the user never synced would never get a Chinese body.
+    for skill in store.get_all_skills().unwrap_or_default() {
+        if let Ok((_, content)) =
+            crate::commands::skills::read_skill_document_from_dir(std::path::Path::new(&skill.central_path))
+        {
+            if content.trim().is_empty() {
+                continue;
+            }
+            if seen.insert(translation_store::body_hash(&content)) {
+                out.push((skill.name.clone(), content));
+            }
+        }
+    }
     out
 }
 
@@ -436,12 +452,28 @@ pub async fn translate_skills(
         let key = load_api_key()?
             .ok_or_else(|| AppError::invalid_input("翻译密钥未配置"))?;
 
-        // Two clicks (the page has always had more than one entry point) used
-        // to start two identical runs, paying for the same text twice. Hold the
+        // Two clicks (the page has never offered a single entry point) used to
+        // start two identical runs, paying for the same text twice. Hold the
         // lock for the whole job; a second caller is told a run is in flight.
-        let _guard = TRANSLATE_JOB_LOCK.try_lock().map_err(|_| {
-            AppError::invalid_input("已有翻译任务正在进行，请等它跑完")
-        })?;
+        //
+        // A poisoned lock is NOT a run in flight: it means a previous holder
+        // panicked (this job makes 5-minute HTTP calls), and treating it as
+        // "busy" would refuse every future translation until the app restarts.
+        // Clear the poison and carry on.
+        let _guard = match TRANSLATE_JOB_LOCK.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                TRANSLATE_JOB_LOCK.clear_poison();
+                TRANSLATE_JOB_LOCK.lock().map_err(|_| {
+                    AppError::internal("翻译任务锁状态异常，请重试")
+                })?
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return Err(AppError::invalid_input(
+                    "已有翻译任务正在进行，请等它跑完",
+                ));
+            }
+        };
 
         let (items, all_batches) = collect_inputs(&store, &plugin_scanner::claude_config_dir());
         let cached = store.get_translations().map_err(AppError::db)?;
